@@ -1,13 +1,25 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel } from '@google/genai';
 
-const MODELS_TO_TRY = [
-  'gemini-3.5-flash',
-  'gemini-2.5-flash',
-  'gemini-flash-latest',
-  'gemini-3.6-flash',
-  'gemini-3.8-flash',
-  'gemini-3-flash-preview',
-  'gemini-3.5-flash-lite',
+interface ModelOption {
+  model: string;
+  thinkingConfig?: Record<string, unknown>;
+}
+
+const INTERNAL_MODELS: ModelOption[] = [
+  { model: 'gemini-3.5-flash-lite', thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
+  { model: 'gemini-3.5-flash', thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
+  { model: 'gemini-3.6-flash', thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
+  { model: 'gemini-3.8-flash', thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
+];
+
+const EXTERNAL_MODELS: ModelOption[] = [
+  { model: 'gemini-2.5-flash-lite', thinkingConfig: { thinkingBudget: 0 } },
+  { model: 'gemini-2.5-flash', thinkingConfig: { thinkingBudget: 0 } },
+  { model: 'gemini-3.1-flash-lite-preview', thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
+  { model: 'gemini-3-flash-preview', thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
+  { model: 'gemini-flash-latest' },
+  { model: 'gemini-3.5-flash-lite', thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
+  { model: 'gemini-3.5-flash', thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
 ];
 
 function extractJson(raw: string) {
@@ -61,16 +73,24 @@ export default async function handler(req: any, res: any) {
       },
     });
 
+    const isExternalKey = apiKey.startsWith('AIza');
+    const modelsToTry = isExternalKey ? EXTERNAL_MODELS : INTERNAL_MODELS;
+
     let lastError: unknown = null;
 
-    for (const model of MODELS_TO_TRY) {
+    for (const { model, thinkingConfig } of modelsToTry) {
       try {
+        const config: Record<string, unknown> = {
+          responseMimeType: 'application/json',
+        };
+        if (thinkingConfig) {
+          config.thinkingConfig = thinkingConfig;
+        }
+
         const response = await ai.models.generateContent({
           model,
           contents: prompt,
-          config: {
-            responseMimeType: 'application/json',
-          },
+          config,
         });
 
         const text = response.text;

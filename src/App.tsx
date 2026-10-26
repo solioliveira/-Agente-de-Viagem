@@ -10,7 +10,6 @@ import {
   onSnapshot,
   query,
   where,
-  orderBy,
   serverTimestamp,
   getDoc,
 } from 'firebase/firestore';
@@ -18,6 +17,7 @@ import { jsPDF } from 'jspdf';
 import {
   auth,
   db,
+  firebaseProjectId,
   loginWithGoogle,
   logoutUser,
   handleFirestoreError,
@@ -277,6 +277,15 @@ const fmtD = (d: string) => {
 
 const clampStr = (s: unknown, max: number) => String(s ?? '').trim().slice(0, max);
 
+const loadLocal = <T,>(key: string, fallback: T): T => {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
 export default function App() {
   const [sec, setSec] = useState<SecKey>('home');
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -284,18 +293,29 @@ export default function App() {
   // Auth & Trips state
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [unauthorizedDomain, setUnauthorizedDomain] = useState<string | null>(null);
   const [viagens, setViagens] = useState<ViagemDoc[]>([]);
   const [activeViagemId, setActiveViagemId] = useState<string>('');
   const [inviteEmail, setInviteEmail] = useState('');
   const [newTripName, setNewTripName] = useState('');
   const [showNewTrip, setShowNewTrip] = useState(false);
 
-  // Shared Trip Data (Firestore when logged in, local state fallback when logged out)
-  const [items, setItems] = useState<RoteiroItem[]>([]);
-  const [mons, setMons] = useState<MonitorItem[]>([]);
-  const [gastos, setGastos] = useState<GastoItem[]>([]);
-  const [checks, setChecks] = useState<CheckItem[]>([]);
-  const [pessoas, setPessoas] = useState<string[]>([]);
+  // Shared Trip Data (Firestore when logged in, localStorage fallback when logged out)
+  const [items, setItems] = useState<RoteiroItem[]>(() =>
+    loadLocal('av_items', [])
+  );
+  const [mons, setMons] = useState<MonitorItem[]>(() =>
+    loadLocal('av_mons', [])
+  );
+  const [gastos, setGastos] = useState<GastoItem[]>(() =>
+    loadLocal('av_gastos', [])
+  );
+  const [checks, setChecks] = useState<CheckItem[]>(() =>
+    loadLocal('av_checks', [])
+  );
+  const [pessoas, setPessoas] = useState<string[]>(() =>
+    loadLocal('av_pessoas', [])
+  );
 
   // Férias Form
   const [fSaida, setFSaida] = useState('');
@@ -379,11 +399,15 @@ export default function App() {
   const [maxB, setMaxB] = useState(0);
 
   // Dividir gastos Form
-  const [gPessInput, setGPessInput] = useState('');
+  const [gPessInput, setGPessInput] = useState(() =>
+    loadLocal<string[]>('av_pessoas', []).join(', ')
+  );
   const [gDesc, setGDesc] = useState('');
   const [gVal, setGVal] = useState('');
-  const [gPag, setGPag] = useState('');
-  const [gDivSelected, setGDivSelected] = useState<string[]>([]);
+  const [gPag, setGPag] = useState(() => loadLocal<string[]>('av_pessoas', [])[0] || '');
+  const [gDivSelected, setGDivSelected] = useState<string[]>(() =>
+    loadLocal<string[]>('av_pessoas', [])
+  );
 
   // Milhas e VIP Form
   const [mPreco, setMPreco] = useState('');
@@ -407,11 +431,26 @@ export default function App() {
     return () => clearTimeout(t);
   }, [toastMsg]);
 
+  // Save to localStorage when not logged in
+  useEffect(() => {
+    if (user) return;
+    try {
+      localStorage.setItem('av_items', JSON.stringify(items));
+      localStorage.setItem('av_mons', JSON.stringify(mons));
+      localStorage.setItem('av_gastos', JSON.stringify(gastos));
+      localStorage.setItem('av_checks', JSON.stringify(checks));
+      localStorage.setItem('av_pessoas', JSON.stringify(pessoas));
+    } catch {
+      // ignore storage quota errors
+    }
+  }, [user, items, mons, gastos, checks, pessoas]);
+
   // Listen to Auth State
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setAuthReady(true);
+      if (u) setUnauthorizedDomain(null);
     });
     return () => unsub();
   }, []);
@@ -572,6 +611,23 @@ export default function App() {
     window.scrollTo(0, 0);
   };
 
+  const handleGoogleLoginClick = async () => {
+    try {
+      setUnauthorizedDomain(null);
+      await loginWithGoogle();
+    } catch (err: any) {
+      const code = err?.code || '';
+      if (code === 'auth/unauthorized-domain') {
+        setUnauthorizedDomain(window.location.hostname);
+        toast('Domínio ainda não liberado no Firebase. Veja as instruções abaixo.');
+      } else if (code === 'auth/popup-closed-by-user') {
+        toast('Janela de login foi fechada antes de concluir.');
+      } else {
+        toast('Não foi possível entrar com o Google agora.');
+      }
+    }
+  };
+
   // Call Server-Side Gemini API
   async function askGemini<T>(
     prompt: string,
@@ -713,7 +769,7 @@ export default function App() {
         valor: cleanValor,
         nota: cleanNota,
         data: cleanData,
-        autor: 'local',
+        autor: 'você',
         autorUid: 'local',
         ts,
         votos: [],
@@ -1539,17 +1595,54 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
             <button
               className="btn sec"
               style={{ margin: 0 }}
-              onClick={() =>
-                loginWithGoogle().catch(() =>
-                  toast('Não foi possível entrar com o Google agora.')
-                )
-              }
+              onClick={handleGoogleLoginClick}
             >
               Entrar com Google (compartilhar roteiro)
             </button>
           )}
         </div>
       </div>
+
+      {/* Helper box when domain is not authorized in Firebase Auth (e.g., Vercel domain) */}
+      {unauthorizedDomain && (
+        <div className="card" style={{ borderLeft: '4px solid var(--acc2)', marginTop: 8 }}>
+          <h4>Como liberar o login com Google neste endereço ({unauthorizedDomain})</h4>
+          <p className="mut" style={{ margin: '6px 0' }}>
+            Por segurança, o Firebase pede que você autorize o domínio da Vercel uma única vez:
+          </p>
+          <ol className="mut" style={{ paddingLeft: 20 }}>
+            <li>
+              Copie este domínio: <b>{unauthorizedDomain}</b>{' '}
+              <button
+                className="btn sec"
+                style={{ margin: '0 0 0 6px', padding: '2px 8px', fontSize: 12 }}
+                onClick={() => {
+                  navigator.clipboard.writeText(unauthorizedDomain);
+                  toast('Domínio copiado!');
+                }}
+              >
+                Copiar
+              </button>
+            </li>
+            <li>
+              Abra o{' '}
+              <a
+                href={`https://console.firebase.google.com/project/${firebaseProjectId}/authentication/settings`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: 'var(--acc)', fontWeight: 600 }}
+              >
+                Painel do Firebase (Domínios autorizados)
+              </a>
+              , clique em <b>Adicionar domínio</b> e cole <b>{unauthorizedDomain}</b>.
+            </li>
+          </ol>
+          <p className="mut" style={{ marginTop: 6 }}>
+            Enquanto isso, você já pode usar todas as funções do app normalmente — seus dados ficam
+            salvos neste aparelho.
+          </p>
+        </div>
+      )}
 
       {/* Create New Trip Box */}
       {user && showNewTrip && (
@@ -2446,7 +2539,8 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
                   <b>{brl(items.reduce((s, i) => s + (Number(i.valor) || 0), 0))}</b>
                 </p>
                 {items.map((i) => {
-                  const meId = user?.email || 'local';
+                  const meId = user?.email || 'você';
+                  const voteId = user?.email || 'local';
                   const v = arr<string>(i.votos);
                   const c = arr<ComentarioItem>(i.comentarios);
                   const isOpen = Boolean(openComments[i.id]);
@@ -2459,7 +2553,7 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
                         {i.data ? <span className="mut"> · {fmtD(i.data)}</span> : null}
                         {i.nota ? <div className="mut">{i.nota}</div> : null}
                         <div className="mut">
-                          {i.autor && i.autor === meId
+                          {i.autor && (i.autor === meId || i.autor === 'local')
                             ? 'adicionado por você'
                             : i.autor
                             ? `adicionado por ${i.autor}`
@@ -2468,7 +2562,7 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
 
                         <div style={{ marginTop: 4 }}>
                           <button
-                            className={`btn${v.includes(meId) ? '' : ' sec'}`}
+                            className={`btn${v.includes(voteId) ? '' : ' sec'}`}
                             style={{ margin: '0 6px 0 0', padding: '3px 10px', fontSize: 14 }}
                             onClick={() => handleVote(i)}
                           >
