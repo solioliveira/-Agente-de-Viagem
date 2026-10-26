@@ -19,10 +19,16 @@ import {
   db,
   firebaseProjectId,
   loginWithGoogle,
+  checkAuthRedirectResult,
   logoutUser,
   handleFirestoreError,
   OperationType,
 } from './firebase';
+
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+}
 
 type AreaKey = 'home' | 'planejar' | 'roteiro' | 'dinheiro';
 type SecKey =
@@ -41,6 +47,11 @@ type SecKey =
 interface ViagemDoc {
   id: string;
   nome: string;
+  destino?: string;
+  dataInicio?: string;
+  moeda?: string;
+  cotacao?: number;
+  idadesCriancas?: string;
   criadorUid: string;
   criadorEmail: string;
   membros: string[];
@@ -52,10 +63,20 @@ interface ComentarioItem {
   ts: number;
 }
 
+type ItemTipo =
+  | 'passagem'
+  | 'hotel'
+  | 'restaurante'
+  | 'passeio'
+  | 'seguro'
+  | 'gasto'
+  | 'nota'
+  | 'destino';
+
 interface RoteiroItem {
   id: string;
   viagemId?: string;
-  tipo: 'passagem' | 'hotel' | 'restaurante' | 'passeio' | 'gasto' | 'nota' | 'destino';
+  tipo: ItemTipo;
   titulo: string;
   valor: number;
   nota: string;
@@ -120,6 +141,7 @@ interface FeriasSugestao {
     alimentacao: number;
     passeios: number;
     transporte_local: number;
+    seguro_viagem?: number;
     total: number;
   };
   hospedagem: (HospedagemSugestao | string)[];
@@ -206,6 +228,13 @@ interface MilhasResult {
   alertas: string[];
 }
 
+interface ChatMsg {
+  role: 'user' | 'agent';
+  texto: string;
+  dicas?: string[];
+  conferir?: string;
+}
+
 const AREAS: Record<AreaKey, { n: string; s: [SecKey, string][] }> = {
   home: { n: 'Início', s: [['home', '']] },
   planejar: {
@@ -236,14 +265,14 @@ const AREAS: Record<AreaKey, { n: string; s: [SecKey, string][] }> = {
 };
 
 const HELP: Record<SecKey, string> = {
-  home: 'Escolha por onde começar o planejamento da sua viagem.',
+  home: 'Escolha sua viagem, acompanhe o resumo e veja por onde começar.',
   ferias:
     'Preencha o que souber e toque em Sugerir destinos. Os campos em "Mais opções" são opcionais.',
   fds: 'Escolha com quem vai e o orçamento. Se estiver em cima da hora, use Escapada de última hora.',
   comp: 'Digite 2 ou 3 destinos que você está em dúvida e veja qual compensa mais.',
   datas: 'Veja em que época do ano costuma ser mais barato viajar para um destino.',
   roteiro:
-    'Aqui vocês juntam passagens, hotéis e passeios. Tudo que um adicionar aparece para o outro.',
+    'Aqui vocês juntam passagens, hotéis, seguro e passeios. Tudo que um adicionar aparece para o outro.',
   mapa: 'Agrupa os passeios do roteiro que ficam perto uns dos outros. Adicione os lugares na aba Itens e agenda antes.',
   check: 'Gere uma lista do que levar e providenciar, e vá marcando o que já está pronto.',
   orc: 'Veja quanto vai gastar, quanto guardar por mês e o que já foi pago.',
@@ -256,6 +285,7 @@ const LBL: Record<string, string> = {
   hotel: 'Hotel',
   restaurante: 'Restaurante',
   passeio: 'Passeio',
+  seguro: 'Seguro viagem',
   gasto: 'Gasto',
   nota: 'Nota',
   destino: 'Destino',
@@ -286,36 +316,63 @@ const loadLocal = <T,>(key: string, fallback: T): T => {
   }
 };
 
+const DEFAULT_LOCAL_TRIP: ViagemDoc = {
+  id: 'local_default',
+  nome: 'Nossa Viagem',
+  destino: '',
+  dataInicio: '',
+  moeda: '',
+  cotacao: 0,
+  idadesCriancas: '',
+  criadorUid: 'local',
+  criadorEmail: 'você',
+  membros: ['você'],
+};
+
 export default function App() {
   const [sec, setSec] = useState<SecKey>('home');
   const [toastMsg, setToastMsg] = useState<string | null>(null);
+
+  // Accessibility: Font scale (0 = 16px, 1 = 18px, 2 = 20px)
+  const [fontScale, setFontScale] = useState<number>(() =>
+    loadLocal('av_font_scale', 0)
+  );
+
+  // Online / Offline & PWA Install State
+  const [isOnline, setIsOnline] = useState<boolean>(
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  );
+  const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [isInstalled, setIsInstalled] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
+  const [showIOSGuide, setShowIOSGuide] = useState(false);
 
   // Auth & Trips state
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [unauthorizedDomain, setUnauthorizedDomain] = useState<string | null>(null);
-  const [viagens, setViagens] = useState<ViagemDoc[]>([]);
-  const [activeViagemId, setActiveViagemId] = useState<string>('');
+  const [authErrorCode, setAuthErrorCode] = useState<string | null>(null);
+
+  const [localViagens, setLocalViagens] = useState<ViagemDoc[]>(() =>
+    loadLocal<ViagemDoc[]>('av_local_viagens', [DEFAULT_LOCAL_TRIP])
+  );
+  const [cloudViagens, setCloudViagens] = useState<ViagemDoc[]>([]);
+  const [activeViagemId, setActiveViagemId] = useState<string>(() =>
+    loadLocal('av_active_viagem_id', DEFAULT_LOCAL_TRIP.id)
+  );
+
   const [inviteEmail, setInviteEmail] = useState('');
   const [newTripName, setNewTripName] = useState('');
+  const [newTripDestino, setNewTripDestino] = useState('');
+  const [newTripData, setNewTripData] = useState('');
   const [showNewTrip, setShowNewTrip] = useState(false);
 
-  // Shared Trip Data (Firestore when logged in, localStorage fallback when logged out)
-  const [items, setItems] = useState<RoteiroItem[]>(() =>
-    loadLocal('av_items', [])
-  );
-  const [mons, setMons] = useState<MonitorItem[]>(() =>
-    loadLocal('av_mons', [])
-  );
-  const [gastos, setGastos] = useState<GastoItem[]>(() =>
-    loadLocal('av_gastos', [])
-  );
-  const [checks, setChecks] = useState<CheckItem[]>(() =>
-    loadLocal('av_checks', [])
-  );
-  const [pessoas, setPessoas] = useState<string[]>(() =>
-    loadLocal('av_pessoas', [])
-  );
+  // Shared Trip Data
+  const [items, setItems] = useState<RoteiroItem[]>([]);
+  const [mons, setMons] = useState<MonitorItem[]>([]);
+  const [gastos, setGastos] = useState<GastoItem[]>([]);
+  const [checks, setChecks] = useState<CheckItem[]>([]);
+  const [pessoas, setPessoas] = useState<string[]>([]);
 
   // Férias Form
   const [fSaida, setFSaida] = useState('');
@@ -370,7 +427,7 @@ export default function App() {
   const [priceInputs, setPriceInputs] = useState<Record<string, string>>({});
 
   // Roteiro Form & Comments
-  const [iTipo, setITipo] = useState<RoteiroItem['tipo']>('passagem');
+  const [iTipo, setITipo] = useState<ItemTipo>('passagem');
   const [iTitulo, setITitulo] = useState('');
   const [iValor, setIValor] = useState('');
   const [iData, setIData] = useState('');
@@ -399,15 +456,11 @@ export default function App() {
   const [maxB, setMaxB] = useState(0);
 
   // Dividir gastos Form
-  const [gPessInput, setGPessInput] = useState(() =>
-    loadLocal<string[]>('av_pessoas', []).join(', ')
-  );
+  const [gPessInput, setGPessInput] = useState('');
   const [gDesc, setGDesc] = useState('');
   const [gVal, setGVal] = useState('');
-  const [gPag, setGPag] = useState(() => loadLocal<string[]>('av_pessoas', [])[0] || '');
-  const [gDivSelected, setGDivSelected] = useState<string[]>(() =>
-    loadLocal<string[]>('av_pessoas', [])
-  );
+  const [gPag, setGPag] = useState('');
+  const [gDivSelected, setGDivSelected] = useState<string[]>([]);
 
   // Milhas e VIP Form
   const [mPreco, setMPreco] = useState('');
@@ -421,6 +474,21 @@ export default function App() {
   const [mErr, setMErr] = useState('');
   const [mResult, setMResult] = useState<MilhasResult | null>(null);
 
+  // Conversa com o Agente (Floating Chat)
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatInput, setChatInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatMsgs, setChatMsgs] = useState<ChatMsg[]>([
+    {
+      role: 'agent',
+      texto:
+        'Olá! Sou seu agente de viagem econômico. Pergunte sobre seu roteiro, onde economizar, bagagem, passeios ou milhas!',
+    },
+  ]);
+
+  const viagens = user ? cloudViagens : localViagens;
+  const activeViagem = viagens.find((v) => v.id === activeViagemId) || viagens[0] || null;
+
   const toast = (m: string) => {
     setToastMsg(m);
   };
@@ -431,26 +499,144 @@ export default function App() {
     return () => clearTimeout(t);
   }, [toastMsg]);
 
-  // Save to localStorage when not logged in
+  // Apply font scale to <html>
+  useEffect(() => {
+    document.documentElement.setAttribute('data-font-scale', String(fontScale));
+    try {
+      localStorage.setItem('av_font_scale', JSON.stringify(fontScale));
+    } catch {
+      // ignore
+    }
+  }, [fontScale]);
+
+  // Track online/offline & PWA install prompt
+  useEffect(() => {
+    const onOnline = () => {
+      setIsOnline(true);
+      toast('Conexão restabelecida! Sincronizando dados...');
+    };
+    const onOffline = () => setIsOnline(false);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+
+    const isStandalone =
+      window.matchMedia('(display-mode: standalone)').matches ||
+      (window.navigator as unknown as { standalone?: boolean }).standalone === true;
+    setIsInstalled(isStandalone);
+
+    const ua = window.navigator.userAgent.toLowerCase();
+    setIsIOS(/iphone|ipad|ipod/.test(ua));
+
+    const handleBeforeInstallPrompt = (e: Event) => {
+      e.preventDefault();
+      setDeferredPrompt(e as BeforeInstallPromptEvent);
+    };
+    const handleAppInstalled = () => {
+      setIsInstalled(true);
+      setDeferredPrompt(null);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, []);
+
+  const handleInstallPwa = async () => {
+    if (!deferredPrompt) return;
+    await deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setIsInstalled(true);
+      setDeferredPrompt(null);
+    }
+  };
+
+  // Persist activeViagemId and localViagens
+  useEffect(() => {
+    try {
+      if (activeViagemId) {
+        localStorage.setItem('av_active_viagem_id', JSON.stringify(activeViagemId));
+      }
+      if (!user) {
+        localStorage.setItem('av_local_viagens', JSON.stringify(localViagens));
+      }
+    } catch {
+      // ignore
+    }
+  }, [activeViagemId, localViagens, user]);
+
+  // Load local per-trip data when not logged in (or as offline cache)
   useEffect(() => {
     if (user) return;
+    const tid = activeViagem?.id || 'local_default';
+    const loadedItems = loadLocal<RoteiroItem[]>(
+      `av_items_${tid}`,
+      tid === 'local_default' ? loadLocal('av_items', []) : []
+    );
+    const loadedMons = loadLocal<MonitorItem[]>(
+      `av_mons_${tid}`,
+      tid === 'local_default' ? loadLocal('av_mons', []) : []
+    );
+    const loadedGastos = loadLocal<GastoItem[]>(
+      `av_gastos_${tid}`,
+      tid === 'local_default' ? loadLocal('av_gastos', []) : []
+    );
+    const loadedChecks = loadLocal<CheckItem[]>(
+      `av_checks_${tid}`,
+      tid === 'local_default' ? loadLocal('av_checks', []) : []
+    );
+    const loadedPessoas = loadLocal<string[]>(
+      `av_pessoas_${tid}`,
+      tid === 'local_default' ? loadLocal('av_pessoas', []) : []
+    );
+
+    setItems(loadedItems);
+    setMons(loadedMons);
+    setGastos(loadedGastos);
+    setChecks(loadedChecks);
+    setPessoas(loadedPessoas);
+    setGPessInput(loadedPessoas.join(', '));
+    setGPag(loadedPessoas[0] || '');
+    setGDivSelected(loadedPessoas);
+  }, [user, activeViagem?.id]);
+
+  // Save per-trip data to localStorage for offline consultation
+  useEffect(() => {
+    const tid = activeViagem?.id || 'local_default';
     try {
-      localStorage.setItem('av_items', JSON.stringify(items));
-      localStorage.setItem('av_mons', JSON.stringify(mons));
-      localStorage.setItem('av_gastos', JSON.stringify(gastos));
-      localStorage.setItem('av_checks', JSON.stringify(checks));
-      localStorage.setItem('av_pessoas', JSON.stringify(pessoas));
+      localStorage.setItem(`av_items_${tid}`, JSON.stringify(items));
+      localStorage.setItem(`av_mons_${tid}`, JSON.stringify(mons));
+      localStorage.setItem(`av_gastos_${tid}`, JSON.stringify(gastos));
+      localStorage.setItem(`av_checks_${tid}`, JSON.stringify(checks));
+      localStorage.setItem(`av_pessoas_${tid}`, JSON.stringify(pessoas));
     } catch {
-      // ignore storage quota errors
+      // ignore
     }
-  }, [user, items, mons, gastos, checks, pessoas]);
+  }, [activeViagem?.id, items, mons, gastos, checks, pessoas]);
 
   // Listen to Auth State
   useEffect(() => {
+    checkAuthRedirectResult().catch((err: any) => {
+      if (err?.code) {
+        setAuthErrorCode(err.code);
+        if (err.code === 'auth/unauthorized-domain') {
+          setUnauthorizedDomain(window.location.hostname);
+        }
+      }
+    });
     const unsub = onAuthStateChanged(auth, (u) => {
       setUser(u);
       setAuthReady(true);
-      if (u) setUnauthorizedDomain(null);
+      if (u) {
+        setUnauthorizedDomain(null);
+        setAuthErrorCode(null);
+      }
     });
     return () => unsub();
   }, []);
@@ -458,8 +644,7 @@ export default function App() {
   // Listen to user's Viagens in Firestore
   useEffect(() => {
     if (!authReady || !user || !user.email) {
-      setViagens([]);
-      setActiveViagemId('');
+      setCloudViagens([]);
       return;
     }
 
@@ -479,6 +664,11 @@ export default function App() {
           try {
             const ref = await addDoc(collection(db, 'viagens'), {
               nome: 'Nossa Viagem',
+              destino: '',
+              dataInicio: '',
+              moeda: '',
+              cotacao: 0,
+              idadesCriancas: '',
               criadorUid: user.uid,
               criadorEmail: user.email,
               membros: [user.email],
@@ -492,7 +682,7 @@ export default function App() {
           return;
         }
 
-        setViagens(list);
+        setCloudViagens(list);
         setActiveViagemId((prev) =>
           prev && list.some((v) => v.id === prev) ? prev : list[0]?.id || ''
         );
@@ -505,21 +695,19 @@ export default function App() {
     return () => unsub();
   }, [authReady, user]);
 
-  // Listen to subcollections of activeViagemId
+  // Listen to subcollections of activeViagem
   useEffect(() => {
-    if (!authReady || !user || !activeViagemId) return;
+    if (!authReady || !user || !activeViagem || activeViagem.id === 'local_default') return;
+    const vid = activeViagem.id;
 
-    const itensPath = `viagens/${activeViagemId}/itens`;
-    const monsPath = `viagens/${activeViagemId}/monitores`;
-    const gastosPath = `viagens/${activeViagemId}/gastos`;
-    const checkPath = `viagens/${activeViagemId}/checklist`;
-    const pessoasPath = `viagens/${activeViagemId}/meta/pessoas`;
+    const itensPath = `viagens/${vid}/itens`;
+    const monsPath = `viagens/${vid}/monitores`;
+    const gastosPath = `viagens/${vid}/gastos`;
+    const checkPath = `viagens/${vid}/checklist`;
+    const pessoasPath = `viagens/${vid}/meta/pessoas`;
 
     const unsubItens = onSnapshot(
-      query(
-        collection(db, 'viagens', activeViagemId, 'itens'),
-        where('viagemId', '==', activeViagemId)
-      ),
+      query(collection(db, 'viagens', vid, 'itens'), where('viagemId', '==', vid)),
       (snap) => {
         const list = snap.docs
           .map((d) => ({ id: d.id, ...(d.data() as Omit<RoteiroItem, 'id'>) }))
@@ -530,10 +718,7 @@ export default function App() {
     );
 
     const unsubMons = onSnapshot(
-      query(
-        collection(db, 'viagens', activeViagemId, 'monitores'),
-        where('viagemId', '==', activeViagemId)
-      ),
+      query(collection(db, 'viagens', vid, 'monitores'), where('viagemId', '==', vid)),
       (snap) => {
         const list = snap.docs
           .map((d) => ({ id: d.id, ...(d.data() as Omit<MonitorItem, 'id'>) }))
@@ -544,10 +729,7 @@ export default function App() {
     );
 
     const unsubGastos = onSnapshot(
-      query(
-        collection(db, 'viagens', activeViagemId, 'gastos'),
-        where('viagemId', '==', activeViagemId)
-      ),
+      query(collection(db, 'viagens', vid, 'gastos'), where('viagemId', '==', vid)),
       (snap) => {
         const list = snap.docs
           .map((d) => ({ id: d.id, ...(d.data() as Omit<GastoItem, 'id'>) }))
@@ -558,10 +740,7 @@ export default function App() {
     );
 
     const unsubChecks = onSnapshot(
-      query(
-        collection(db, 'viagens', activeViagemId, 'checklist'),
-        where('viagemId', '==', activeViagemId)
-      ),
+      query(collection(db, 'viagens', vid, 'checklist'), where('viagemId', '==', vid)),
       (snap) => {
         const list = snap.docs
           .map((d) => ({ id: d.id, ...(d.data() as Omit<CheckItem, 'id'>) }))
@@ -572,7 +751,7 @@ export default function App() {
     );
 
     const unsubPessoas = onSnapshot(
-      doc(db, 'viagens', activeViagemId, 'meta', 'pessoas'),
+      doc(db, 'viagens', vid, 'meta', 'pessoas'),
       (snap) => {
         if (snap.exists()) {
           const data = snap.data();
@@ -598,9 +777,22 @@ export default function App() {
       unsubChecks();
       unsubPessoas();
     };
-  }, [authReady, user, activeViagemId]);
+  }, [authReady, user, activeViagem?.id]);
 
-  const activeViagem = viagens.find((v) => v.id === activeViagemId) || null;
+  // Currency Conversion Helper (#4 CÂMBIO E SEGURO)
+  const moedaAtiva = activeViagem?.moeda?.trim().toUpperCase() || '';
+  const cotacaoAtiva = Number(activeViagem?.cotacao) || 0;
+
+  const fmtMoney = (valorBrl: unknown) => {
+    const n = Number(valorBrl || 0);
+    const base = brl(n);
+    if (moedaAtiva && cotacaoAtiva > 0 && n > 0) {
+      const conv = Math.round(n / cotacaoAtiva);
+      return `${base} (~${moedaAtiva} ${conv.toLocaleString('pt-BR')})`;
+    }
+    return base;
+  };
+
   const currentArea: AreaKey =
     (Object.keys(AREAS) as AreaKey[]).find((k) =>
       AREAS[k].s.some((x) => x[0] === sec)
@@ -614,16 +806,20 @@ export default function App() {
   const handleGoogleLoginClick = async () => {
     try {
       setUnauthorizedDomain(null);
+      setAuthErrorCode(null);
       await loginWithGoogle();
     } catch (err: any) {
-      const code = err?.code || '';
+      const code = err?.code || 'erro-desconhecido';
+      setAuthErrorCode(code);
       if (code === 'auth/unauthorized-domain') {
         setUnauthorizedDomain(window.location.hostname);
-        toast('Domínio ainda não liberado no Firebase. Veja as instruções abaixo.');
+        toast('Domínio ainda não liberado no Firebase. Veja o passo a passo abaixo.');
       } else if (code === 'auth/popup-closed-by-user') {
+        setAuthErrorCode(null);
         toast('Janela de login foi fechada antes de concluir.');
       } else {
-        toast('Não foi possível entrar com o Google agora.');
+        setUnauthorizedDomain(window.location.hostname);
+        toast(`Erro no login (${code}). Veja como resolver abaixo.`);
       }
     }
   };
@@ -656,31 +852,94 @@ export default function App() {
     }
   }
 
-  // Trip Management
+  // Trip Management (#1 VÁRIAS VIAGENS)
   const handleCreateTrip = async () => {
-    if (!user || !user.email) return toast('Faça login com o Google primeiro.');
     const nome = clampStr(newTripName, 100);
+    const destino = clampStr(newTripDestino, 100);
+    const dataInicio = clampStr(newTripData, 20);
     if (!nome) return toast('Dê um nome para a viagem.');
-    try {
-      const ref = await addDoc(collection(db, 'viagens'), {
+
+    if (user && user.email) {
+      try {
+        const ref = await addDoc(collection(db, 'viagens'), {
+          nome,
+          destino,
+          dataInicio,
+          moeda: '',
+          cotacao: 0,
+          idadesCriancas: '',
+          criadorUid: user.uid,
+          criadorEmail: user.email,
+          membros: [user.email],
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+        setActiveViagemId(ref.id);
+        setNewTripName('');
+        setNewTripDestino('');
+        setNewTripData('');
+        setShowNewTrip(false);
+        toast('Nova viagem criada!');
+      } catch (e) {
+        handleFirestoreError(e, OperationType.CREATE, 'viagens');
+      }
+    } else {
+      const newDoc: ViagemDoc = {
+        id: 'local_' + Date.now(),
         nome,
-        criadorUid: user.uid,
-        criadorEmail: user.email,
-        membros: [user.email],
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-      });
-      setActiveViagemId(ref.id);
+        destino,
+        dataInicio,
+        moeda: '',
+        cotacao: 0,
+        idadesCriancas: '',
+        criadorUid: 'local',
+        criadorEmail: 'você',
+        membros: ['você'],
+      };
+      setLocalViagens((prev) => [...prev, newDoc]);
+      setActiveViagemId(newDoc.id);
       setNewTripName('');
+      setNewTripDestino('');
+      setNewTripData('');
       setShowNewTrip(false);
-      toast('Nova viagem criada!');
-    } catch (e) {
-      handleFirestoreError(e, OperationType.CREATE, 'viagens');
+      toast('Nova viagem criada neste aparelho!');
+    }
+  };
+
+  const updateTripMeta = async (patch: Partial<ViagemDoc>) => {
+    if (!activeViagem) return;
+    const cleanPatch: Record<string, unknown> = {};
+    if (patch.destino !== undefined) cleanPatch.destino = clampStr(patch.destino, 100);
+    if (patch.dataInicio !== undefined) cleanPatch.dataInicio = clampStr(patch.dataInicio, 20);
+    if (patch.moeda !== undefined) cleanPatch.moeda = clampStr(patch.moeda.toUpperCase(), 10);
+    if (patch.cotacao !== undefined) {
+      cleanPatch.cotacao = Math.max(0, Math.min(100000, Number(patch.cotacao) || 0));
+    }
+    if (patch.idadesCriancas !== undefined) {
+      cleanPatch.idadesCriancas = clampStr(patch.idadesCriancas, 50);
+    }
+
+    if (user && activeViagem.id !== 'local_default' && !activeViagem.id.startsWith('local_')) {
+      try {
+        await updateDoc(doc(db, 'viagens', activeViagem.id), {
+          ...cleanPatch,
+          updatedAt: serverTimestamp(),
+        });
+      } catch (e) {
+        handleFirestoreError(e, OperationType.UPDATE, `viagens/${activeViagem.id}`);
+      }
+    } else {
+      setLocalViagens((prev) =>
+        prev.map((v) => (v.id === activeViagem.id ? { ...v, ...cleanPatch } : v))
+      );
     }
   };
 
   const handleInviteMember = async () => {
-    if (!user || !activeViagem) return;
+    if (!activeViagem) return;
+    if (!user) {
+      return toast('Entre com o Google para convidar outra pessoa por e-mail.');
+    }
     if (activeViagem.criadorUid !== user.uid) {
       return toast('Apenas quem criou a viagem pode convidar membros.');
     }
@@ -725,7 +984,7 @@ export default function App() {
 
   // CRUD Helpers for Roteiro Items
   const addItem = async (partial: {
-    tipo: RoteiroItem['tipo'];
+    tipo: ItemTipo;
     titulo: string;
     valor?: number;
     nota?: string;
@@ -737,11 +996,18 @@ export default function App() {
     const cleanData = clampStr(partial.data || '', 20);
     const cleanValor = Math.max(0, Math.min(100000000, Number(partial.valor) || 0));
 
-    if (user && user.email && activeViagemId) {
-      const path = `viagens/${activeViagemId}/itens`;
+    if (
+      user &&
+      user.email &&
+      activeViagem &&
+      activeViagem.id !== 'local_default' &&
+      !activeViagem.id.startsWith('local_')
+    ) {
+      const vid = activeViagem.id;
+      const path = `viagens/${vid}/itens`;
       try {
-        await addDoc(collection(db, 'viagens', activeViagemId, 'itens'), {
-          viagemId: activeViagemId,
+        await addDoc(collection(db, 'viagens', vid, 'itens'), {
+          viagemId: vid,
           tipo: partial.tipo,
           titulo: cleanTitulo,
           valor: cleanValor,
@@ -782,10 +1048,16 @@ export default function App() {
   };
 
   const delItem = async (id: string) => {
-    if (user && activeViagemId) {
-      const path = `viagens/${activeViagemId}/itens/${id}`;
+    if (
+      user &&
+      activeViagem &&
+      activeViagem.id !== 'local_default' &&
+      !activeViagem.id.startsWith('local_')
+    ) {
+      const vid = activeViagem.id;
+      const path = `viagens/${vid}/itens/${id}`;
       try {
-        await deleteDoc(doc(db, 'viagens', activeViagemId, 'itens', id));
+        await deleteDoc(doc(db, 'viagens', vid, 'itens', id));
       } catch (e) {
         toast('Sem permissão para apagar.');
         handleFirestoreError(e, OperationType.DELETE, path);
@@ -796,10 +1068,16 @@ export default function App() {
   };
 
   const mutateItem = async (id: string, patch: Partial<RoteiroItem>) => {
-    if (user && activeViagemId) {
-      const path = `viagens/${activeViagemId}/itens/${id}`;
+    if (
+      user &&
+      activeViagem &&
+      activeViagem.id !== 'local_default' &&
+      !activeViagem.id.startsWith('local_')
+    ) {
+      const vid = activeViagem.id;
+      const path = `viagens/${vid}/itens/${id}`;
       try {
-        await updateDoc(doc(db, 'viagens', activeViagemId, 'itens', id), {
+        await updateDoc(doc(db, 'viagens', vid, 'itens', id), {
           ...patch,
           updatedAt: serverTimestamp(),
         });
@@ -835,10 +1113,13 @@ export default function App() {
 
   // Férias Handler
   const handleSuggestFerias = async () => {
+    if (fCriancas.trim()) {
+      updateTripMeta({ idadesCriancas: fCriancas.trim() });
+    }
     const p = `Você é um agente de viagens brasileiro experiente. Responda SOMENTE com JSON válido, sem markdown.
-Perfil: saída de ${fSaida.trim() || 'cidade não informada'}; período ${fQuando.trim() || 'flexível'}; ${fDias} dias; ${fAdultos} adulto(s); crianças com idades: ${fCriancas.trim() || 'nenhuma'}; tipo: ${fTipo}; orçamento total R$ ${fOrc.trim() || 'não informado'}; milhas: ${fMilhas.trim() || '0'}; preferências: ${fEstilo.trim() || 'nenhuma'}.
+Perfil: saída de ${fSaida.trim() || 'cidade não informada'}; período ${fQuando.trim() || activeViagem?.dataInicio || 'flexível'}; ${fDias} dias; ${fAdultos} adulto(s); crianças com idades: ${fCriancas.trim() || activeViagem?.idadesCriancas || 'nenhuma'}; tipo: ${fTipo}; orçamento total R$ ${fOrc.trim() || 'não informado'}; milhas: ${fMilhas.trim() || '0'}; preferências: ${fEstilo.trim() || 'nenhuma'}.
 Foco: ${fFoco}. Se o foco for econômico, priorize destinos e épocas com melhor custo-benefício (baixa temporada, datas flexíveis, aeroportos alternativos, hospedagem em apartamento ou pousada, bagagem e transfers) e explique como economizar sem estragar a viagem. Sugira 3 destinos adequados à época e à família. Todos os valores em reais (números), estimativas realistas e arredondadas para o total do grupo; não invente preços exatos nem prometa tarifas.
-Formato: {"sugestoes":[{"destino":"","pais":"","tipo":"nacional|internacional","porque":"","custos":{"passagens":0,"hospedagem":0,"alimentacao":0,"passeios":0,"transporte_local":0,"total":0},"hospedagem":[{"nome":"","tipo":"hotel|resort|pousada","faixa_diaria_brl":0}],"passagem":{"onde_comprar":"","milhas_ou_dinheiro":""},"pagar_antes":"","reserva_destino_brl":0,"roteiro":["Dia 1: ..."],"restaurantes":[""],"passeios":[""],"dicas_economia":[""],"economia_estimada_brl":0,"sala_vip_milhas":""}]}
+Formato: {"sugestoes":[{"destino":"","pais":"","tipo":"nacional|internacional","porque":"","custos":{"passagens":0,"hospedagem":0,"alimentacao":0,"passeios":0,"transporte_local":0,"seguro_viagem":0,"total":0},"hospedagem":[{"nome":"","tipo":"hotel|resort|pousada","faixa_diaria_brl":0}],"passagem":{"onde_comprar":"","milhas_ou_dinheiro":""},"pagar_antes":"","reserva_destino_brl":0,"roteiro":["Dia 1: ..."],"restaurantes":[""],"passeios":[""],"dicas_economia":[""],"economia_estimada_brl":0,"sala_vip_milhas":""}]}
 Em "milhas_ou_dinheiro" diga quando vale usar milhas considerando o saldo informado. Em "pagar_antes" diga o que convém quitar antecipadamente e o que guardar para gastar no destino. Roteiro resumido (até 6 itens). Em "dicas_economia" liste 3 a 5 ações concretas; em "economia_estimada_brl" o quanto isso pode reduzir o total; em "sala_vip_milhas" dê dica de milhas e de como acessar sala VIP nos aeroportos dessa viagem, sem afirmar regras exatas de cartões ou programas.`;
 
     const r = await askGemini<{ sugestoes?: FeriasSugestao[] }>(p, setFLoading, setFErr);
@@ -855,9 +1136,10 @@ Em "milhas_ou_dinheiro" diga quando vale usar milhas considerando o saldo inform
       valor: 0,
       nota: arr<string>(s.roteiro).join(' · '),
     });
-    const costEntries: [RoteiroItem['tipo'], keyof FeriasSugestao['custos'], string][] = [
+    const costEntries: [ItemTipo, keyof FeriasSugestao['custos'], string][] = [
       ['passagem', 'passagens', 'Passagens'],
       ['hotel', 'hospedagem', 'Hospedagem'],
+      ['seguro', 'seguro_viagem', 'Seguro viagem'],
       ['gasto', 'alimentacao', 'Alimentação'],
       ['passeio', 'passeios', 'Passeios'],
       ['gasto', 'transporte_local', 'Transporte local'],
@@ -885,6 +1167,9 @@ Em "milhas_ou_dinheiro" diga quando vale usar milhas considerando o saldo inform
 
   // Fim de semana Handler
   const handleSuggestFds = async (isLastMinute = false, overrideQuando?: string) => {
+    if (wCriancas.trim()) {
+      updateTripMeta({ idadesCriancas: wCriancas.trim() });
+    }
     const epocaStr = overrideQuando ?? wQuando.trim() ?? 'este fim de semana';
     const p = `Você é um agente de viagens brasileiro. Responda SOMENTE com JSON válido, sem markdown.
 Sugira 4 escapadas de fim de semana saindo de ${wSaida.trim() || 'cidade não informada'}, para ${wPerfil}${wCriancas.trim() ? ' (crianças: ' + wCriancas.trim() + ' anos)' : ''}, ${wRaio}, orçamento ~R$ ${wOrc.trim() || 'não informado'}, época: ${epocaStr || 'este fim de semana'}. ${isLastMinute ? 'Escapada de última hora para o próximo fim de semana: priorize opções fáceis de reservar em cima da hora e informe o clima típico da época (você não tem a previsão real: diga para conferir). ' : ''}Foco: ${wFoco}; se for econômico, priorize opções baratas e dê dicas de como economizar. Inclua interior e opções perto. Valores em reais, estimativas gerais sem prometer preços exatos.
@@ -956,11 +1241,17 @@ Formato: {"resumo":"","melhores_meses":[""],"meses":[{"mes":"Janeiro","nivel":"a
     const cleanData = clampStr(pData, 20);
     const cleanAlvo = Math.max(0, Math.min(100000000, Number(pAlvo) || 0));
 
-    if (user && activeViagemId) {
-      const path = `viagens/${activeViagemId}/monitores`;
+    if (
+      user &&
+      activeViagem &&
+      activeViagem.id !== 'local_default' &&
+      !activeViagem.id.startsWith('local_')
+    ) {
+      const vid = activeViagem.id;
+      const path = `viagens/${vid}/monitores`;
       try {
-        await addDoc(collection(db, 'viagens', activeViagemId, 'monitores'), {
-          viagemId: activeViagemId,
+        await addDoc(collection(db, 'viagens', vid, 'monitores'), {
+          viagemId: vid,
           nome: n,
           data: cleanData,
           alvo: cleanAlvo,
@@ -992,10 +1283,16 @@ Formato: {"resumo":"","melhores_meses":[""],"meses":[{"mes":"Janeiro","nivel":"a
       .slice(0, 200);
     setPriceInputs((prev) => ({ ...prev, [m.id]: '' }));
 
-    if (user && activeViagemId) {
-      const path = `viagens/${activeViagemId}/monitores/${m.id}`;
+    if (
+      user &&
+      activeViagem &&
+      activeViagem.id !== 'local_default' &&
+      !activeViagem.id.startsWith('local_')
+    ) {
+      const vid = activeViagem.id;
+      const path = `viagens/${vid}/monitores/${m.id}`;
       try {
-        await updateDoc(doc(db, 'viagens', activeViagemId, 'monitores', m.id), {
+        await updateDoc(doc(db, 'viagens', vid, 'monitores', m.id), {
           regs: nextRegs,
           updatedAt: serverTimestamp(),
         });
@@ -1009,10 +1306,16 @@ Formato: {"resumo":"","melhores_meses":[""],"meses":[{"mes":"Janeiro","nivel":"a
   };
 
   const handleDelMonitor = async (id: string) => {
-    if (user && activeViagemId) {
-      const path = `viagens/${activeViagemId}/monitores/${id}`;
+    if (
+      user &&
+      activeViagem &&
+      activeViagem.id !== 'local_default' &&
+      !activeViagem.id.startsWith('local_')
+    ) {
+      const vid = activeViagem.id;
+      const path = `viagens/${vid}/monitores/${id}`;
       try {
-        await deleteDoc(doc(db, 'viagens', activeViagemId, 'monitores', id));
+        await deleteDoc(doc(db, 'viagens', vid, 'monitores', id));
       } catch (e) {
         toast('Sem permissão para apagar.');
         handleFirestoreError(e, OperationType.DELETE, path);
@@ -1025,7 +1328,7 @@ Formato: {"resumo":"","melhores_meses":[""],"meses":[{"mes":"Janeiro","nivel":"a
   // Mapa Handler
   const handleGerarMapa = async () => {
     const L = items.filter((i) => ['passeio', 'restaurante', 'hotel'].includes(i.tipo));
-    const cid = mpCidade.trim();
+    const cid = mpCidade.trim() || activeViagem?.destino || '';
     if (L.length < 2) {
       return toast('Adicione pelo menos 2 lugares (passeio, restaurante ou hotel) ao roteiro.');
     }
@@ -1047,11 +1350,17 @@ Formato: {"grupos":[{"nome":"Dia 1","itens":[{"titulo":"","lat":0,"lng":0}]}],"d
     const cleanTexto = clampStr(texto, 250);
     if (!cleanTexto) return;
 
-    if (user && activeViagemId) {
-      const path = `viagens/${activeViagemId}/checklist`;
+    if (
+      user &&
+      activeViagem &&
+      activeViagem.id !== 'local_default' &&
+      !activeViagem.id.startsWith('local_')
+    ) {
+      const vid = activeViagem.id;
+      const path = `viagens/${vid}/checklist`;
       try {
-        await addDoc(collection(db, 'viagens', activeViagemId, 'checklist'), {
-          viagemId: activeViagemId,
+        await addDoc(collection(db, 'viagens', vid, 'checklist'), {
+          viagemId: vid,
           cat: cleanCat,
           texto: cleanTexto,
           feito: false,
@@ -1072,10 +1381,16 @@ Formato: {"grupos":[{"nome":"Dia 1","itens":[{"titulo":"","lat":0,"lng":0}]}],"d
   };
 
   const toggleCheckItem = async (id: string, feito: boolean) => {
-    if (user && activeViagemId) {
-      const path = `viagens/${activeViagemId}/checklist/${id}`;
+    if (
+      user &&
+      activeViagem &&
+      activeViagem.id !== 'local_default' &&
+      !activeViagem.id.startsWith('local_')
+    ) {
+      const vid = activeViagem.id;
+      const path = `viagens/${vid}/checklist/${id}`;
       try {
-        await updateDoc(doc(db, 'viagens', activeViagemId, 'checklist', id), {
+        await updateDoc(doc(db, 'viagens', vid, 'checklist', id), {
           feito,
           updatedAt: serverTimestamp(),
         });
@@ -1089,10 +1404,16 @@ Formato: {"grupos":[{"nome":"Dia 1","itens":[{"titulo":"","lat":0,"lng":0}]}],"d
   };
 
   const delCheckItem = async (id: string) => {
-    if (user && activeViagemId) {
-      const path = `viagens/${activeViagemId}/checklist/${id}`;
+    if (
+      user &&
+      activeViagem &&
+      activeViagem.id !== 'local_default' &&
+      !activeViagem.id.startsWith('local_')
+    ) {
+      const vid = activeViagem.id;
+      const path = `viagens/${vid}/checklist/${id}`;
       try {
-        await deleteDoc(doc(db, 'viagens', activeViagemId, 'checklist', id));
+        await deleteDoc(doc(db, 'viagens', vid, 'checklist', id));
       } catch (e) {
         toast('Sem permissão para apagar.');
         handleFirestoreError(e, OperationType.DELETE, path);
@@ -1103,9 +1424,13 @@ Formato: {"grupos":[{"nome":"Dia 1","itens":[{"titulo":"","lat":0,"lng":0}]}],"d
   };
 
   const handleGerarChecklist = async () => {
-    if (!kDest.trim()) return toast('Informe o destino.');
+    const dest = kDest.trim() || activeViagem?.destino || '';
+    if (!dest) return toast('Informe o destino.');
+    if (kCri.trim()) {
+      updateTripMeta({ idadesCriancas: kCri.trim() });
+    }
     const p = `Você é planejador de viagens. Responda SOMENTE com JSON válido, sem markdown.
-Gere um checklist de viagem para ${kDest.trim()} (${kTipo}), época ${kEpoca.trim() || 'não informada'}, crianças com idades: ${kCri.trim() || 'nenhuma'}. Até 30 itens curtos e objetivos nas categorias Documentos, Bagagem, Saúde e vacinas, Criança (só se houver), Dinheiro e celular, Antes de sair. Para vacinas e exigências de entrada, escreva "conferir exigência oficial" em vez de afirmar regras exatas.
+Gere um checklist de viagem para ${dest} (${kTipo}), época ${kEpoca.trim() || activeViagem?.dataInicio || 'não informada'}, crianças com idades: ${kCri.trim() || activeViagem?.idadesCriancas || 'nenhuma'}. Até 30 itens curtos e objetivos nas categorias Documentos, Bagagem, Saúde e vacinas, Criança (só se houver), Dinheiro e celular, Antes de sair. Inclua "Seguro viagem (comparar coberturas ou benefício do cartão)" em Documentos. Para vacinas e exigências de entrada, escreva "conferir exigência oficial" em vez de afirmar regras exatas.
 Formato: {"itens":[{"cat":"","texto":""}]}`;
 
     const r = await askGemini<{ itens?: { cat: string; texto: string }[] }>(
@@ -1130,10 +1455,16 @@ Formato: {"itens":[{"cat":"","texto":""}]}`;
       .slice(0, 30);
     if (nomes.length < 2) return toast('Informe pelo menos 2 pessoas.');
 
-    if (user && activeViagemId) {
-      const path = `viagens/${activeViagemId}/meta/pessoas`;
+    if (
+      user &&
+      activeViagem &&
+      activeViagem.id !== 'local_default' &&
+      !activeViagem.id.startsWith('local_')
+    ) {
+      const vid = activeViagem.id;
+      const path = `viagens/${vid}/meta/pessoas`;
       try {
-        const ref = doc(db, 'viagens', activeViagemId, 'meta', 'pessoas');
+        const ref = doc(db, 'viagens', vid, 'meta', 'pessoas');
         const snap = await getDoc(ref);
         if (snap.exists()) {
           await updateDoc(ref, {
@@ -1142,7 +1473,7 @@ Formato: {"itens":[{"cat":"","texto":""}]}`;
           });
         } else {
           await setDoc(ref, {
-            viagemId: activeViagemId,
+            viagemId: vid,
             nomes,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
@@ -1170,11 +1501,17 @@ Formato: {"itens":[{"cat":"","texto":""}]}`;
       return toast('Preencha descrição, valor, quem pagou e com quem divide.');
     }
     const ts = Date.now();
-    if (user && activeViagemId) {
-      const path = `viagens/${activeViagemId}/gastos`;
+    if (
+      user &&
+      activeViagem &&
+      activeViagem.id !== 'local_default' &&
+      !activeViagem.id.startsWith('local_')
+    ) {
+      const vid = activeViagem.id;
+      const path = `viagens/${vid}/gastos`;
       try {
-        await addDoc(collection(db, 'viagens', activeViagemId, 'gastos'), {
-          viagemId: activeViagemId,
+        await addDoc(collection(db, 'viagens', vid, 'gastos'), {
+          viagemId: vid,
           desc,
           valor: val,
           pagador: pag,
@@ -1198,10 +1535,16 @@ Formato: {"itens":[{"cat":"","texto":""}]}`;
   };
 
   const handleDelGasto = async (id: string) => {
-    if (user && activeViagemId) {
-      const path = `viagens/${activeViagemId}/gastos/${id}`;
+    if (
+      user &&
+      activeViagem &&
+      activeViagem.id !== 'local_default' &&
+      !activeViagem.id.startsWith('local_')
+    ) {
+      const vid = activeViagem.id;
+      const path = `viagens/${vid}/gastos/${id}`;
       try {
-        await deleteDoc(doc(db, 'viagens', activeViagemId, 'gastos', id));
+        await deleteDoc(doc(db, 'viagens', vid, 'gastos', id));
       } catch (e) {
         toast('Sem permissão para apagar.');
         handleFirestoreError(e, OperationType.DELETE, path);
@@ -1214,7 +1557,7 @@ Formato: {"itens":[{"cat":"","texto":""}]}`;
   // Milhas IA Strategy Handler
   const handleMilhasStrategy = async () => {
     const p = `Você é especialista em milhas e viagem econômica no Brasil. Responda SOMENTE com JSON válido, sem markdown.
-Perfil: programas e saldo: ${mProg.trim() || 'não informado'}; cartões: ${mCart.trim() || 'não informado'}; viagem pretendida: ${mViag.trim() || 'não informada'}.
+Perfil: programas e saldo: ${mProg.trim() || 'não informado'}; cartões: ${mCart.trim() || 'não informado'}; viagem pretendida: ${mViag.trim() || activeViagem?.destino || 'não informada'}.
 Monte uma estratégia prática para gastar menos e viajar bem. Não afirme regras, preços ou benefícios exatos de cartões e programas; diga o que conferir.
 Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"alertas":[""]}`;
 
@@ -1222,9 +1565,78 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
     if (r) setMResult(r);
   };
 
+  // #3 CONVERSA COM O AGENTE (Floating Chat Handler)
+  const handleSendChat = async () => {
+    const pergunta = chatInput.trim();
+    if (!pergunta || chatLoading) return;
+    setChatInput('');
+    setChatMsgs((prev) => [...prev, { role: 'user', texto: pergunta }]);
+
+    const roteiroCtx = items
+      .slice(0, 25)
+      .map((i) => `${LBL[i.tipo] || i.tipo}: ${i.titulo} (R$ ${i.valor || 0}${i.data ? ', ' + fmtD(i.data) : ''})`)
+      .join('; ');
+    const gastosCtx = gastos
+      .slice(0, 15)
+      .map((g) => `${g.desc}: R$ ${g.valor} (pago por ${g.pagador})`)
+      .join('; ');
+    const criancasCtx =
+      activeViagem?.idadesCriancas || fCriancas || wCriancas || kCri || 'não informadas';
+
+    const p = `Você é o Agente de Viagem econômico do usuário, conversando em português do Brasil de forma simples, amigável e sem jargão técnico. Responda SOMENTE com JSON válido, sem markdown.
+Contexto da viagem selecionada:
+- Nome: ${activeViagem?.nome || 'Nossa Viagem'}
+- Destino: ${activeViagem?.destino || 'ainda não definido'}
+- Data aproximada: ${activeViagem?.dataInicio ? fmtD(activeViagem.dataInicio) : 'não definida'}
+- Idades das crianças: ${criancasCtx}
+- Moeda estrangeira: ${moedaAtiva ? `${moedaAtiva} (cotação R$ ${cotacaoAtiva})` : 'R$ (Real)'}
+- Itens do roteiro (${items.length}): ${roteiroCtx || 'nenhum item ainda'}
+- Gastos registrados (${gastos.length}): ${gastosCtx || 'nenhum gasto ainda'}
+
+Regras obrigatórias:
+1. Foco em economia: sugira alternativas mais baratas e práticas quando fizer sentido.
+2. Nunca afirme preços exatos, regras de milhas/cartões, vacinas ou exigências de entrada em países como certos; diga sempre o que a pessoa deve conferir nos sites oficiais.
+3. Formato JSON obrigatório: {"resposta":"","dicas_economia":[],"o_que_conferir":""}
+
+Pergunta do viajante: ${pergunta}`;
+
+    const dummyErr = () => {};
+    const r = await askGemini<{
+      resposta?: string;
+      dicas_economia?: string[];
+      o_que_conferir?: string;
+    }>(p, setChatLoading, dummyErr);
+
+    if (r && r.resposta) {
+      setChatMsgs((prev) => [
+        ...prev,
+        {
+          role: 'agent',
+          texto: r.resposta || '',
+          dicas: arr<string>(r.dicas_economia),
+          conferir: r.o_que_conferir || '',
+        },
+      ]);
+    } else {
+      setChatMsgs((prev) => [
+        ...prev,
+        {
+          role: 'agent',
+          texto: 'Não consegui responder agora. Tente novamente em instantes.',
+        },
+      ]);
+    }
+  };
+
   // Export Summary Text & PDF
   const buildResumo = () => {
-    const L = ['ROTEIRO DE VIAGEM', ''];
+    const L = [
+      `ROTEIRO DE VIAGEM — ${activeViagem?.nome || 'Nossa Viagem'}`,
+      activeViagem?.destino ? `Destino: ${activeViagem.destino}` : '',
+      activeViagem?.dataInicio ? `Data aproximada: ${fmtD(activeViagem.dataInicio)}` : '',
+      '',
+    ].filter((x, idx) => idx === 0 || idx === 3 || Boolean(x));
+
     const ag = items.filter((i) => i.data).sort((x, y) => (x.data < y.data ? -1 : 1));
     if (ag.length) {
       L.push('AGENDA');
@@ -1234,21 +1646,21 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
           L.push(fmtD(i.data));
           last = i.data;
         }
-        L.push(`- ${i.titulo}${i.valor ? ` (${brl(i.valor)})` : ''}`);
+        L.push(`- ${i.titulo}${i.valor ? ` (${fmtMoney(i.valor)})` : ''}`);
       });
       L.push('');
     }
     L.push('ITENS');
     items.forEach((i) =>
       L.push(
-        `- [${LBL[i.tipo] || i.tipo}] ${i.titulo}${i.valor ? ` - ${brl(i.valor)}` : ''}${
+        `- [${LBL[i.tipo] || i.tipo}] ${i.titulo}${i.valor ? ` - ${fmtMoney(i.valor)}` : ''}${
           i.nota ? ` (${i.nota})` : ''
         }`
       )
     );
     L.push(
       '',
-      `Total estimado: ${brl(items.reduce((s, i) => s + (Number(i.valor) || 0), 0))}`
+      `Total estimado: ${fmtMoney(items.reduce((s, i) => s + (Number(i.valor) || 0), 0))}`
     );
     return L.join('\n').replace(/\u00a0/g, ' ');
   };
@@ -1300,7 +1712,7 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
                 <li key={idx}>
                   {obj.nome}
                   {obj.tipo ? ` (${obj.tipo})` : ''}
-                  {obj.faixa_diaria_brl ? ` · ~${brl(obj.faixa_diaria_brl)}/noite` : ''}
+                  {obj.faixa_diaria_brl ? ` · ~${fmtMoney(obj.faixa_diaria_brl)}/noite` : ''}
                 </li>
               );
             }
@@ -1311,9 +1723,9 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
     );
   };
 
-  // Calculations for Orçamento
+  // Calculations for Orçamento & Dashboard (#2 PAINEL NA TELA INICIAL)
   const antTotal = items
-    .filter((i) => ['passagem', 'hotel'].includes(i.tipo))
+    .filter((i) => ['passagem', 'hotel', 'seguro'].includes(i.tipo))
     .reduce((s, i) => s + (Number(i.valor) || 0), 0);
   const destTotal = items
     .filter((i) => ['restaurante', 'passeio', 'gasto'].includes(i.tipo))
@@ -1328,6 +1740,33 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
   const totPlano = paidItemsList.reduce((s, i) => s + Number(i.valor), 0);
   const faltaPagar = totPlano - pagoSum;
   const hojeIso = new Date().toLocaleDateString('sv-SE');
+
+  // Next payment deadline
+  const unpaidWithDeadline = paidItemsList
+    .filter((i) => !i.pago && i.prazo)
+    .sort((a, b) => (a.prazo < b.prazo ? -1 : 1));
+  const nextDeadlineItem = unpaidWithDeadline[0] || null;
+  const nextDeadlineOverdue = Boolean(
+    nextDeadlineItem && nextDeadlineItem.prazo < hojeIso
+  );
+
+  // Days until trip
+  const computeDiasFaltam = () => {
+    const dtStr = activeViagem?.dataInicio;
+    if (!dtStr) return null;
+    const target = new Date(dtStr + 'T00:00:00');
+    if (Number.isNaN(target.getTime())) return null;
+    const now = new Date();
+    const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const diffDays = Math.round(
+      (target.getTime() - todayMidnight.getTime()) / (1000 * 60 * 60 * 24)
+    );
+    return diffDays;
+  };
+  const diasFaltam = computeDiasFaltam();
+
+  // Checklist progress
+  const checksProntos = checks.filter((c) => c.feito).length;
 
   // Calculations for Dividir gastos
   const computeGastosSettlement = () => {
@@ -1352,7 +1791,7 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
     let j = 0;
     while (i < dev.length && j < cred.length) {
       const m = Math.min(dev[i][1], cred[j][1]);
-      acc.push(`${dev[i][0]} paga ${brl(m)} a ${cred[j][0]}`);
+      acc.push(`${dev[i][0]} paga ${fmtMoney(m)} a ${cred[j][0]}`);
       dev[i][1] -= m;
       cred[j][1] -= m;
       if (dev[i][1] < 0.5) i++;
@@ -1419,12 +1858,15 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
     const sx = (v: number) => P + (d === c ? 0.5 : (v - c) / (d - c)) * (W - 2 * P);
     const sy = (v: number) => H - P - (b === a ? 0.5 : (v - a) / (b - a)) * (H - 2 * P);
     const COR = ['#0e7c86', '#d9692c', '#7b5ea7', '#4a9d3f', '#c2415d', '#b8860b'];
-    const q = (x: MapaPonto) => encodeURIComponent(`${x.titulo} ${mpCidade.trim()}`);
+    const cidRef = mpCidade.trim() || activeViagem?.destino || '';
+    const q = (x: MapaPonto) => encodeURIComponent(`${x.titulo} ${cidRef}`);
 
     return (
       <div>
         <svg
           viewBox={`0 0 ${W} ${H}`}
+          role="img"
+          aria-label="Mapa esquemático agrupando lugares por dia"
           style={{
             width: '100%',
             background: 'var(--bg)',
@@ -1515,7 +1957,7 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
                   href={link}
                   target="_blank"
                   rel="noopener noreferrer"
-                  style={{ color: 'var(--acc)', fontWeight: 600, fontSize: 14 }}
+                  style={{ color: 'var(--acc)', fontWeight: 600, fontSize: '0.875rem' }}
                 >
                   Abrir trajeto no Google Maps
                 </a>
@@ -1541,7 +1983,8 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
 
   return (
     <div className="wrap">
-      <div
+      {/* Header with Accessibility, PWA Install, and Google Auth */}
+      <header
         style={{
           display: 'flex',
           justifyContent: 'space-between',
@@ -1558,83 +2001,139 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
           </p>
         </div>
 
-        {/* Google Login & Trip Switcher */}
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          {/* #6 ACESSIBILIDADE: Aumentar tamanho do texto */}
+          <button
+            className="btn sec"
+            style={{ margin: 0, padding: '6px 10px' }}
+            onClick={() => setFontScale((prev) => (prev + 1) % 3)}
+            aria-label="Alternar tamanho do texto para facilitar a leitura"
+            title="Aumentar ou diminuir tamanho da letra"
+          >
+            🔍 A+ Texto ({fontScale === 0 ? 'Normal' : fontScale === 1 ? 'Grande' : 'Extra'})
+          </button>
+
+          {/* #5 OFFLINE / PWA: Botão Instalar App */}
+          {!isInstalled && deferredPrompt && (
+            <button
+              className="btn sec"
+              style={{ margin: 0, padding: '6px 10px' }}
+              onClick={handleInstallPwa}
+              aria-label="Instalar aplicativo no aparelho"
+            >
+              📲 Instalar app
+            </button>
+          )}
+          {!isInstalled && !deferredPrompt && isIOS && (
+            <button
+              className="btn sec"
+              style={{ margin: 0, padding: '6px 10px' }}
+              onClick={() => setShowIOSGuide((v) => !v)}
+              aria-label="Como instalar no iPhone ou iPad"
+            >
+              📲 Instalar no iPhone
+            </button>
+          )}
+
+          {/* Login Google */}
           {user ? (
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-              {viagens.length > 0 && (
-                <select
-                  value={activeViagemId}
-                  onChange={(e) => setActiveViagemId(e.target.value)}
-                  style={{ width: 'auto', margin: 0, padding: '6px 10px', fontSize: 14 }}
-                  aria-label="Selecionar viagem"
-                >
-                  {viagens.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      📋 {v.nome}
-                    </option>
-                  ))}
-                </select>
-              )}
-              <button
-                className="btn sec"
-                style={{ margin: 0, padding: '6px 10px' }}
-                onClick={() => setShowNewTrip((v) => !v)}
-              >
-                + Nova viagem
-              </button>
-              <button
-                className="btn sec"
-                style={{ margin: 0, padding: '6px 10px' }}
-                onClick={() => logoutUser()}
-              >
-                Sair ({user.email?.split('@')[0]})
-              </button>
-            </div>
+            <button
+              className="btn sec"
+              style={{ margin: 0, padding: '6px 10px' }}
+              onClick={() => logoutUser()}
+              aria-label={`Sair da conta ${user.email}`}
+            >
+              Sair ({user.email?.split('@')[0]})
+            </button>
           ) : (
             <button
               className="btn sec"
-              style={{ margin: 0 }}
+              style={{ margin: 0, padding: '6px 10px' }}
               onClick={handleGoogleLoginClick}
+              aria-label="Entrar com conta do Google para compartilhar roteiro"
             >
-              Entrar com Google (compartilhar roteiro)
+              Entrar com Google
             </button>
           )}
         </div>
-      </div>
+      </header>
 
-      {/* Helper box when domain is not authorized in Firebase Auth (e.g., Vercel domain) */}
-      {unauthorizedDomain && (
-        <div className="card" style={{ borderLeft: '4px solid var(--acc2)', marginTop: 8 }}>
-          <h4>Como liberar o login com Google neste endereço ({unauthorizedDomain})</h4>
-          <p className="mut" style={{ margin: '6px 0' }}>
-            Por segurança, o Firebase pede que você autorize o domínio da Vercel uma única vez:
+      {/* #5 OFFLINE: Aviso de modo sem internet */}
+      {!isOnline && (
+        <div className="offline-banner" role="status" aria-live="polite">
+          📡 <b>Você está sem internet (modo offline).</b> O roteiro, a agenda e o checklist estão
+          salvos em cache para consulta. As alterações feitas offline serão enviadas quando a
+          conexão voltar.
+        </div>
+      )}
+
+      {/* Guia de instalação no iOS */}
+      {showIOSGuide && (
+        <div className="card" style={{ marginTop: 8 }}>
+          <h4>Como instalar no iPhone / iPad</h4>
+          <p className="mut">
+            1. Toque no botão <b>Compartilhar</b> na barra do Safari.
+            <br />
+            2. Role para baixo e toque em <b>Adicionar à Tela de Início</b>.
           </p>
-          <ol className="mut" style={{ paddingLeft: 20 }}>
+          <button
+            className="btn sec"
+            style={{ marginTop: 4 }}
+            onClick={() => setShowIOSGuide(false)}
+          >
+            Fechar
+          </button>
+        </div>
+      )}
+
+      {/* Helper box when domain or provider needs authorization in Firebase Auth */}
+      {(unauthorizedDomain || authErrorCode) && (
+        <div className="card" style={{ borderLeft: '4px solid var(--acc2)', marginTop: 8 }}>
+          <h4>
+            Como liberar o login com Google neste endereço (
+            {unauthorizedDomain || window.location.hostname})
+          </h4>
+          {authErrorCode && (
+            <p className="mut" style={{ margin: '4px 0' }}>
+              Motivo informado pelo Google/Firebase: <b>{authErrorCode}</b>
+            </p>
+          )}
+          <ol className="mut" style={{ paddingLeft: 20, marginTop: 6 }}>
             <li>
-              Copie este domínio: <b>{unauthorizedDomain}</b>{' '}
-              <button
-                className="btn sec"
-                style={{ margin: '0 0 0 6px', padding: '2px 8px', fontSize: 12 }}
-                onClick={() => {
-                  navigator.clipboard.writeText(unauthorizedDomain);
-                  toast('Domínio copiado!');
-                }}
-              >
-                Copiar
-              </button>
-            </li>
-            <li>
-              Abra o{' '}
+              <b>Autorizar o domínio da Vercel:</b> Abra os{' '}
               <a
                 href={`https://console.firebase.google.com/project/${firebaseProjectId}/authentication/settings`}
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{ color: 'var(--acc)', fontWeight: 600 }}
               >
-                Painel do Firebase (Domínios autorizados)
+                Domínios autorizados no Firebase
               </a>
-              , clique em <b>Adicionar domínio</b> e cole <b>{unauthorizedDomain}</b>.
+              , clique em <b>Adicionar domínio</b> e cole:{' '}
+              <b>{unauthorizedDomain || window.location.hostname}</b>{' '}
+              <button
+                className="btn sec"
+                style={{ margin: '0 0 0 6px', padding: '2px 8px', fontSize: 12 }}
+                onClick={() => {
+                  navigator.clipboard.writeText(unauthorizedDomain || window.location.hostname);
+                  toast('Domínio copiado!');
+                }}
+              >
+                Copiar
+              </button>
+            </li>
+            <li style={{ marginTop: 6 }}>
+              <b>Verificar se o provedor Google está ativo:</b> Abra{' '}
+              <a
+                href={`https://console.firebase.google.com/project/${firebaseProjectId}/authentication/providers`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ color: 'var(--acc)', fontWeight: 600 }}
+              >
+                Sign-in method (Provedores) no Firebase
+              </a>
+              , clique em <b>Google</b>, marque <b>Ativar (Enable)</b>, escolha seu e-mail de
+              suporte e clique em <b>Salvar</b>.
             </li>
           </ol>
           <p className="mut" style={{ marginTop: 6 }}>
@@ -1644,58 +2143,292 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
         </div>
       )}
 
-      {/* Create New Trip Box */}
-      {user && showNewTrip && (
-        <div className="card" style={{ marginTop: 8 }}>
-          <h4>Criar outra viagem compartilhada</h4>
-          <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
-            <input
-              value={newTripName}
-              onChange={(e) => setNewTripName(e.target.value)}
-              placeholder="Ex.: Férias Nordeste 2027"
-              style={{ flex: 1, minWidth: 180, margin: 0 }}
-            />
-            <button className="btn" style={{ margin: 0 }} onClick={handleCreateTrip}>
-              Criar
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* Main Areas Bar */}
-      <div className="tabs" role="tablist">
+      <nav className="tabs" role="tablist" aria-label="Áreas principais do aplicativo">
         {(Object.keys(AREAS) as AreaKey[]).map((k) => (
           <button
             key={k}
+            role="tab"
+            aria-selected={k === currentArea}
             className={k === currentArea ? 'on' : ''}
             onClick={() => go(AREAS[k].s[0][0])}
           >
             {AREAS[k].n}
           </button>
         ))}
-      </div>
+      </nav>
 
       {/* Subtabs Bar */}
       {currentArea !== 'home' && (
-        <div className="tabs subtabs" role="tablist">
+        <nav className="tabs subtabs" role="tablist" aria-label="Subabas da seção atual">
           {AREAS[currentArea].s.map(([sKey, sLabel]) => (
             <button
               key={sKey}
+              role="tab"
+              aria-selected={sKey === sec}
               className={sKey === sec ? 'on' : ''}
               onClick={() => go(sKey)}
             >
               {sLabel}
             </button>
           ))}
+        </nav>
+      )}
+
+      {/* Quick Trip Switcher Banner when not on Home */}
+      {sec !== 'home' && viagens.length > 0 && (
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: 8,
+            flexWrap: 'wrap',
+            marginBottom: 10,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <label htmlFor="top-trip-select" className="mut" style={{ fontWeight: 600 }}>
+              Viagem ativa:
+            </label>
+            <select
+              id="top-trip-select"
+              value={activeViagem?.id || ''}
+              onChange={(e) => setActiveViagemId(e.target.value)}
+              style={{ width: 'auto', margin: 0, padding: '5px 10px', fontSize: '0.875rem' }}
+            >
+              {viagens.map((v) => (
+                <option key={v.id} value={v.id}>
+                  📋 {v.nome}
+                  {v.destino ? ` (${v.destino})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+          {moedaAtiva && cotacaoAtiva > 0 && (
+            <span className="tag" style={{ margin: 0 }}>
+              Câmbio: 1 {moedaAtiva} = R$ {cotacaoAtiva.toFixed(2)}
+            </span>
+          )}
         </div>
       )}
 
       {/* Help Box */}
       {HELP[sec] && <div className="help">{HELP[sec]}</div>}
 
-      {/* INÍCIO */}
+      {/* INÍCIO (#1 VÁRIAS VIAGENS & #2 PAINEL NA TELA INICIAL) */}
       {sec === 'home' && (
         <section>
+          {/* #1 VÁRIAS VIAGENS: Seletor Minhas viagens + botão Nova viagem + convite por e-mail */}
+          <div className="card">
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: 8,
+              }}
+            >
+              <h3 style={{ margin: 0 }}>Minhas viagens</h3>
+              <button
+                className="btn sec"
+                style={{ margin: 0 }}
+                onClick={() => setShowNewTrip((v) => !v)}
+              >
+                {showNewTrip ? 'Cancelar' : '+ Nova viagem'}
+              </button>
+            </div>
+
+            {viagens.length > 0 && (
+              <div className="grid-form" style={{ marginTop: 10 }}>
+                <label className="field-label">
+                  Viagem selecionada
+                  <select
+                    value={activeViagem?.id || ''}
+                    onChange={(e) => setActiveViagemId(e.target.value)}
+                    aria-label="Selecionar viagem ativa"
+                  >
+                    {viagens.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.nome}
+                        {v.destino ? ` — ${v.destino}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field-label">
+                  Destino da viagem (opcional)
+                  <input
+                    value={activeViagem?.destino || ''}
+                    onChange={(e) => updateTripMeta({ destino: e.target.value })}
+                    placeholder="Ex.: Lisboa, Maceió…"
+                  />
+                </label>
+                <label className="field-label">
+                  Data aproximada da viagem
+                  <input
+                    type="date"
+                    value={activeViagem?.dataInicio || ''}
+                    onChange={(e) => updateTripMeta({ dataInicio: e.target.value })}
+                  />
+                </label>
+              </div>
+            )}
+
+            {/* Formulário Nova viagem */}
+            {showNewTrip && (
+              <div
+                style={{
+                  marginTop: 12,
+                  paddingTop: 12,
+                  borderTop: '1px solid var(--line)',
+                }}
+              >
+                <h4>Criar nova viagem</h4>
+                <div className="grid-form">
+                  <label className="field-label">
+                    Nome da viagem *
+                    <input
+                      value={newTripName}
+                      onChange={(e) => setNewTripName(e.target.value)}
+                      placeholder="Ex.: Férias de Julho"
+                    />
+                  </label>
+                  <label className="field-label">
+                    Destino (opcional)
+                    <input
+                      value={newTripDestino}
+                      onChange={(e) => setNewTripDestino(e.target.value)}
+                      placeholder="Ex.: Gramado, Portugal…"
+                    />
+                  </label>
+                  <label className="field-label">
+                    Data aproximada (opcional)
+                    <input
+                      type="date"
+                      value={newTripData}
+                      onChange={(e) => setNewTripData(e.target.value)}
+                    />
+                  </label>
+                </div>
+                <button className="btn" onClick={handleCreateTrip}>
+                  Salvar nova viagem
+                </button>
+              </div>
+            )}
+
+            {/* Convidar pessoa por e-mail */}
+            {activeViagem && (
+              <details className="adv" style={{ marginTop: 10 }}>
+                <summary>
+                  Compartilhar esta viagem ({activeViagem.membros.length}{' '}
+                  {activeViagem.membros.length === 1 ? 'membro' : 'membros'})
+                </summary>
+                <div style={{ marginTop: 8 }}>
+                  <p className="mut" style={{ marginBottom: 6 }}>
+                    Quem faz parte: <b>{activeViagem.membros.join(', ')}</b>
+                  </p>
+                  {user ? (
+                    activeViagem.criadorUid === user.uid ? (
+                      <div
+                        style={{
+                          display: 'flex',
+                          gap: 6,
+                          flexWrap: 'wrap',
+                          alignItems: 'center',
+                        }}
+                      >
+                        <input
+                          type="email"
+                          value={inviteEmail}
+                          onChange={(e) => setInviteEmail(e.target.value)}
+                          placeholder="E-mail de quem vai planejar junto"
+                          style={{ flex: 1, minWidth: 200, margin: 0 }}
+                          aria-label="E-mail para convidar para a viagem"
+                        />
+                        <button
+                          className="btn sec"
+                          style={{ margin: 0 }}
+                          onClick={handleInviteMember}
+                        >
+                          Convidar por e-mail
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="mut">
+                        Viagem criada por {activeViagem.criadorEmail}.
+                      </p>
+                    )
+                  ) : (
+                    <p className="mut">
+                      Entre com o Google no topo para convidar outra pessoa pelo e-mail e editar em
+                      tempo real.
+                    </p>
+                  )}
+                </div>
+              </details>
+            )}
+          </div>
+
+          {/* #2 PAINEL NA TELA INICIAL: Resumo da viagem selecionada */}
+          {activeViagem && (
+            <div className="card" aria-label="Resumo da viagem selecionada">
+              <h3>
+                Resumo: {activeViagem.nome}
+                {activeViagem.destino ? (
+                  <span className="tag">{activeViagem.destino}</span>
+                ) : null}
+              </h3>
+
+              <div className="cost">
+                <div>
+                  Quando
+                  <b>
+                    {diasFaltam === null
+                      ? 'Sem data'
+                      : diasFaltam > 0
+                      ? `Faltam ${diasFaltam} dias`
+                      : diasFaltam === 0
+                      ? 'É hoje!'
+                      : `Há ${Math.abs(diasFaltam)} dias`}
+                  </b>
+                </div>
+                <div>
+                  Total estimado<b>{fmtMoney(totOrc)}</b>
+                </div>
+                <div>
+                  Já pago<b>{fmtMoney(pagoSum)}</b>
+                </div>
+                <div>
+                  Falta pagar<b>{fmtMoney(faltaPagar)}</b>
+                </div>
+                <div>
+                  Checklist
+                  <b>
+                    {checksProntos} de {checks.length} prontos
+                  </b>
+                </div>
+              </div>
+
+              <div className="mut" style={{ marginTop: 6 }}>
+                Próximo prazo de pagamento:{' '}
+                {nextDeadlineItem ? (
+                  <span className={nextDeadlineOverdue ? 'err' : ''}>
+                    <b>
+                      {fmtD(nextDeadlineItem.prazo)} — {nextDeadlineItem.titulo} (
+                      {fmtMoney(nextDeadlineItem.valor)})
+                      {nextDeadlineOverdue ? ' · PRAZO VENCIDO!' : ''}
+                    </b>
+                  </span>
+                ) : (
+                  <b>Nenhum prazo pendente</b>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 3 Botões Grandes Originais */}
           <div className="card">
             <h3>O que você quer fazer?</h3>
             <button className="big-btn" onClick={() => go('ferias')}>
@@ -1812,6 +2545,25 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
                     <option>Conforto</option>
                   </select>
                 </label>
+                {/* #4 CÂMBIO E SEGURO: Moeda e cotação em viagens internacionais */}
+                <label className="field-label">
+                  Moeda do destino (se internacional)
+                  <input
+                    value={activeViagem?.moeda || ''}
+                    onChange={(e) => updateTripMeta({ moeda: e.target.value })}
+                    placeholder="Ex.: USD, EUR, ARS"
+                  />
+                </label>
+                <label className="field-label">
+                  Cotação da moeda (R$)
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={activeViagem?.cotacao || ''}
+                    onChange={(e) => updateTripMeta({ cotacao: Number(e.target.value) || 0 })}
+                    placeholder="Ex.: 5.80"
+                  />
+                </label>
               </div>
             </details>
 
@@ -1842,28 +2594,33 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
 
                   <div className="cost">
                     <div>
-                      Passagens<b>{brl(c.passagens)}</b>
+                      Passagens<b>{fmtMoney(c.passagens)}</b>
                     </div>
                     <div>
-                      Hospedagem<b>{brl(c.hospedagem)}</b>
+                      Hospedagem<b>{fmtMoney(c.hospedagem)}</b>
                     </div>
                     <div>
-                      Alimentação<b>{brl(c.alimentacao)}</b>
+                      Alimentação<b>{fmtMoney(c.alimentacao)}</b>
                     </div>
                     <div>
-                      Passeios<b>{brl(c.passeios)}</b>
+                      Passeios<b>{fmtMoney(c.passeios)}</b>
                     </div>
                     <div>
-                      Transporte<b>{brl(c.transporte_local)}</b>
+                      Transporte<b>{fmtMoney(c.transporte_local)}</b>
                     </div>
+                    {Boolean(c.seguro_viagem) && (
+                      <div>
+                        Seguro viagem<b>{fmtMoney(c.seguro_viagem)}</b>
+                      </div>
+                    )}
                     <div>
-                      Total<b>{brl(c.total)}</b>
+                      Total<b>{fmtMoney(c.total)}</b>
                     </div>
                   </div>
 
                   {Boolean(s.economia_estimada_brl) && (
                     <p>
-                      <b>Economia possível: ~{brl(s.economia_estimada_brl)}</b>
+                      <b>Economia possível: ~{fmtMoney(s.economia_estimada_brl)}</b>
                     </p>
                   )}
 
@@ -1888,7 +2645,7 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
                     {s.reserva_destino_brl ? (
                       <>
                         {' '}
-                        Reserva para o destino: <b>{brl(s.reserva_destino_brl)}</b>.
+                        Reserva para o destino: <b>{fmtMoney(s.reserva_destino_brl)}</b>.
                       </>
                     ) : null}
                   </p>
@@ -2009,7 +2766,7 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
               <div className="card" key={i}>
                 <h3>{s.destino}</h3>
                 <div className="mut">
-                  {s.distancia} · ~{brl(s.custo_estimado_brl)}
+                  {s.distancia} · ~{fmtMoney(s.custo_estimado_brl)}
                 </div>
                 <p>{s.porque}</p>
                 {renderLista('Roteiro', s.roteiro)}
@@ -2126,18 +2883,18 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
                       )}
                       <div className="cost">
                         <div>
-                          Total<b>{brl(d.custo_total_brl)}</b>
+                          Total<b>{fmtMoney(d.custo_total_brl)}</b>
                         </div>
                         <div>
-                          Por dia<b>{brl(d.custo_por_dia_brl)}</b>
+                          Por dia<b>{fmtMoney(d.custo_por_dia_brl)}</b>
                         </div>
                         <div>
                           Nota<b>{d.nota_custo_beneficio}/10</b>
                         </div>
                       </div>
                       <div className="mut">
-                        Passagens {brl(d.passagens)} · Hospedagem {brl(d.hospedagem)} · Alimentação
-                        e passeios {brl(d.alimentacao_passeios)}
+                        Passagens {fmtMoney(d.passagens)} · Hospedagem {fmtMoney(d.hospedagem)} ·
+                        Alimentação e passeios {fmtMoney(d.alimentacao_passeios)}
                       </div>
                       {d.melhor_epoca_barata && (
                         <>
@@ -2289,21 +3046,21 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
                       <div style={{ flex: 1 }}>
                         <b>{m.nome}</b>
                         {m.data ? <span className="mut"> · {fmtD(m.data)}</span> : null}
-                        {m.alvo ? <span className="tag">alvo {brl(m.alvo)}</span> : null}
+                        {m.alvo ? <span className="tag">alvo {fmtMoney(m.alvo)}</span> : null}
                         <div>
                           {last == null ? (
                             <span className="mut">Sem registros ainda</span>
                           ) : (
                             <span>
                               {ok && <b style={{ color: 'var(--acc)' }}>Chegou no alvo! </b>}
-                              Último: <b>{brl(last)}</b> · menor: {brl(min)}
+                              Último: <b>{fmtMoney(last)}</b> · menor: {fmtMoney(min)}
                               {r.length > 1
                                 ? ` · desde o primeiro registro: ${
                                     dv <= 0 ? 'caiu ' : 'subiu '
-                                  }${brl(Math.abs(dv))}`
+                                  }${fmtMoney(Math.abs(dv))}`
                                 : ''}
                               {m.alvo && !ok
-                                ? ` · faltam ${brl(last - m.alvo)} para o alvo`
+                                ? ` · faltam ${fmtMoney(last - m.alvo)} para o alvo`
                                 : ''}
                             </span>
                           )}
@@ -2329,7 +3086,7 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
                       </div>
                       <button
                         className="x-btn"
-                        aria-label="Apagar"
+                        aria-label="Apagar monitor"
                         onClick={() => handleDelMonitor(m.id)}
                       >
                         ×
@@ -2346,7 +3103,6 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
       {/* ROTEIRO: ITENS E AGENDA */}
       {sec === 'roteiro' && (
         <section>
-          {/* Compartilhamento / Membros da Viagem */}
           <div className="card">
             <h3>Roteiro compartilhado</h3>
             {user && activeViagem ? (
@@ -2390,6 +3146,7 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
                               padding: '0 2px',
                             }}
                             title="Remover membro"
+                            aria-label={`Remover ${em}`}
                           >
                             ×
                           </button>
@@ -2410,10 +3167,11 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
                 Tipo
                 <select
                   value={iTipo}
-                  onChange={(e) => setITipo(e.target.value as RoteiroItem['tipo'])}
+                  onChange={(e) => setITipo(e.target.value as ItemTipo)}
                 >
                   <option value="passagem">Passagem</option>
                   <option value="hotel">Hotel / resort</option>
+                  <option value="seguro">Seguro viagem</option>
                   <option value="restaurante">Restaurante</option>
                   <option value="passeio">Passeio</option>
                   <option value="gasto">Outro gasto</option>
@@ -2518,7 +3276,7 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
                       {showHeader && <h4>{fmtD(i.data)}</h4>}
                       <div>
                         • {i.titulo}{' '}
-                        {i.valor ? <span className="mut">{brl(i.valor)}</span> : null}
+                        {i.valor ? <span className="mut">{fmtMoney(i.valor)}</span> : null}
                       </div>
                     </React.Fragment>
                   );
@@ -2536,7 +3294,7 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
               <>
                 <p className="mut">
                   Total estimado:{' '}
-                  <b>{brl(items.reduce((s, i) => s + (Number(i.valor) || 0), 0))}</b>
+                  <b>{fmtMoney(items.reduce((s, i) => s + (Number(i.valor) || 0), 0))}</b>
                 </p>
                 {items.map((i) => {
                   const meId = user?.email || 'você';
@@ -2549,7 +3307,7 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
                       <div style={{ flex: 1 }}>
                         <b>{i.titulo}</b>
                         <span className="tag">{LBL[i.tipo] || i.tipo}</span>
-                        {i.valor ? <span className="mut"> · {brl(i.valor)}</span> : null}
+                        {i.valor ? <span className="mut"> · {fmtMoney(i.valor)}</span> : null}
                         {i.data ? <span className="mut"> · {fmtD(i.data)}</span> : null}
                         {i.nota ? <div className="mut">{i.nota}</div> : null}
                         <div className="mut">
@@ -2563,17 +3321,19 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
                         <div style={{ marginTop: 4 }}>
                           <button
                             className={`btn${v.includes(voteId) ? '' : ' sec'}`}
-                            style={{ margin: '0 6px 0 0', padding: '3px 10px', fontSize: 14 }}
+                            style={{ margin: '0 6px 0 0', padding: '3px 10px', fontSize: '0.875rem' }}
                             onClick={() => handleVote(i)}
+                            aria-label={`Curtir item ${i.titulo}, ${v.length} votos`}
                           >
                             👍 {v.length}
                           </button>
                           <button
                             className="btn sec"
-                            style={{ margin: 0, padding: '3px 10px', fontSize: 14 }}
+                            style={{ margin: 0, padding: '3px 10px', fontSize: '0.875rem' }}
                             onClick={() =>
                               setOpenComments((prev) => ({ ...prev, [i.id]: !prev[i.id] }))
                             }
+                            aria-label={`Comentários de ${i.titulo}, ${c.length} comentários`}
                           >
                             💬 {c.length}
                           </button>
@@ -2612,7 +3372,7 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
                       </div>
                       <button
                         className="x-btn"
-                        aria-label="Apagar"
+                        aria-label={`Apagar ${i.titulo}`}
                         onClick={() => delItem(i.id)}
                       >
                         ×
@@ -2642,7 +3402,7 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
                 <input
                   value={mpCidade}
                   onChange={(e) => setMpCidade(e.target.value)}
-                  placeholder="Ex.: Lisboa"
+                  placeholder={activeViagem?.destino || 'Ex.: Lisboa'}
                 />
               </label>
               <label className="field-label">
@@ -2681,7 +3441,11 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
             <div className="grid-form">
               <label className="field-label">
                 Destino
-                <input value={kDest} onChange={(e) => setKDest(e.target.value)} />
+                <input
+                  value={kDest}
+                  onChange={(e) => setKDest(e.target.value)}
+                  placeholder={activeViagem?.destino || 'Seu destino'}
+                />
               </label>
               <label className="field-label">
                 Época
@@ -2707,9 +3471,25 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
                 </select>
               </label>
             </div>
-            <button className="btn" disabled={kLoading} onClick={handleGerarChecklist}>
-              Gerar checklist
-            </button>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              <button className="btn" disabled={kLoading} onClick={handleGerarChecklist}>
+                Gerar checklist
+              </button>
+              {/* #4 CÂMBIO E SEGURO: Seguro viagem como item sugerido no checklist */}
+              <button
+                className="btn sec"
+                style={{ marginTop: 12, padding: '10px 14px' }}
+                onClick={() => {
+                  addCheckItem(
+                    'Documentos',
+                    'Seguro viagem (conferir cobertura médica ou emissão pelo cartão)'
+                  );
+                  toast('Seguro viagem adicionado ao checklist!');
+                }}
+              >
+                + Incluir Seguro viagem
+              </button>
+            </div>
             <p className="mut" style={{ marginTop: 10 }}>
               Documentos e vacinas variam por destino e mudam: confirme em fontes oficiais
               (consulado, Anvisa, posto de saúde) antes de viajar.
@@ -2767,7 +3547,7 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
                                   gap: 8,
                                   alignItems: 'center',
                                   color: 'var(--ink)',
-                                  fontSize: 15,
+                                  fontSize: '0.95rem',
                                   cursor: 'pointer',
                                 }}
                               >
@@ -2791,7 +3571,7 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
                               </label>
                               <button
                                 className="x-btn"
-                                aria-label="Apagar"
+                                aria-label={`Apagar ${i.texto}`}
                                 onClick={() => delCheckItem(i.id)}
                               >
                                 ×
@@ -2808,7 +3588,7 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
         </section>
       )}
 
-      {/* ORÇAMENTO */}
+      {/* ORÇAMENTO (#4 CÂMBIO E SEGURO incluído) */}
       {sec === 'orc' && (
         <section>
           <div className="card">
@@ -2833,32 +3613,57 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
               </label>
             </div>
 
+            {/* #4 CÂMBIO E SEGURO: Moeda estrangeira e cotação */}
+            <details className="adv" open={Boolean(moedaAtiva)}>
+              <summary>Câmbio para viagem internacional (opcional)</summary>
+              <div className="grid-form" style={{ marginTop: 8 }}>
+                <label className="field-label">
+                  Moeda do destino (ex.: USD, EUR, GBP)
+                  <input
+                    value={activeViagem?.moeda || ''}
+                    onChange={(e) => updateTripMeta({ moeda: e.target.value })}
+                    placeholder="Ex.: EUR"
+                  />
+                </label>
+                <label className="field-label">
+                  Cotação (1 moeda = quantos R$)
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={activeViagem?.cotacao || ''}
+                    onChange={(e) => updateTripMeta({ cotacao: Number(e.target.value) || 0 })}
+                    placeholder="Ex.: 6.10"
+                  />
+                </label>
+              </div>
+            </details>
+
             <div className="cost">
               <div>
-                Total estimado<b>{brl(totOrc)}</b>
+                Total estimado<b>{fmtMoney(totOrc)}</b>
               </div>
               <div>
-                Pagar antes (passagem + hotel)<b>{brl(antTotal)}</b>
+                Pagar antes (passagem + hotel + seguro)<b>{fmtMoney(antTotal)}</b>
               </div>
               <div>
-                Guardar para gastar lá<b>{brl(destTotal)}</b>
+                Guardar para gastar lá<b>{fmtMoney(destTotal)}</b>
               </div>
             </div>
 
             <p>
               Guardando por mês:{' '}
-              <span className="big">{brl(totOrc / Math.max(1, meses))}</span>
+              <span className="big">{fmtMoney(totOrc / Math.max(1, meses))}</span>
             </p>
 
             {maxB > 0 && (
               <p>
                 {totOrc <= maxB ? (
                   <>
-                    Dentro do limite, sobram <b>{brl(maxB - totOrc)}</b>.
+                    Dentro do limite, sobram <b>{fmtMoney(maxB - totOrc)}</b>.
                   </>
                 ) : (
                   <>
-                    <b className="err">Acima do limite em {brl(totOrc - maxB)}.</b> Revise
+                    <b className="err">Acima do limite em {fmtMoney(totOrc - maxB)}.</b> Revise
                     passagens e hospedagem, que pesam mais.
                   </>
                 )}
@@ -2866,11 +3671,11 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
             )}
 
             <p className="mut">
-              Dica geral: passagem e hospedagem costumam ser as partes mais caras e as que mais
-              sobem perto da data, então vale quitar essas primeiro e juntar o restante em
-              paralelo. Confira se há cancelamento gratuito e compare pagar em dinheiro com usar
-              milhas. Valores são estimativas gerais, sem preços em tempo real. Confirme nos sites
-              antes de comprar.
+              Dica geral: passagem, hospedagem e seguro viagem costumam ser pagos antes, e
+              passagens/hotéis sobem perto da data — então vale quitar essas partes primeiro e
+              juntar o restante em paralelo. Confira se há cancelamento gratuito e compare pagar em
+              dinheiro com usar milhas. Valores são estimativas gerais, sem preços em tempo real.
+              Confirme nos sites antes de comprar.
             </p>
           </div>
 
@@ -2884,15 +3689,15 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
               <>
                 <div className="cost">
                   <div>
-                    Já pago<b>{brl(pagoSum)}</b>
+                    Já pago<b>{fmtMoney(pagoSum)}</b>
                   </div>
                   <div>
-                    Falta pagar<b>{brl(faltaPagar)}</b>
+                    Falta pagar<b>{fmtMoney(faltaPagar)}</b>
                   </div>
                 </div>
                 <p>
                   Para quitar o que falta em {meses} meses:{' '}
-                  <b>{brl(faltaPagar / Math.max(1, meses))}</b> por mês.
+                  <b>{fmtMoney(faltaPagar / Math.max(1, meses))}</b> por mês.
                 </p>
 
                 {paidItemsList.map((i) => {
@@ -2919,14 +3724,15 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
                               i.pago ? { textDecoration: 'line-through' } : undefined
                             }
                           >
-                            {i.titulo} · {brl(i.valor)}
+                            {i.titulo} · {fmtMoney(i.valor)}
                           </span>
                         </label>
                         {atrasado && <div className="err">Prazo vencido</div>}
                       </div>
                       <input
                         type="date"
-                        style={{ width: 150, margin: 0 }}
+                        aria-label={`Prazo de pagamento para ${i.titulo}`}
+                        style={{ width: 155, margin: 0 }}
                         value={i.prazo || ''}
                         onChange={(e) => mutateItem(i.id, { prazo: e.target.value })}
                       />
@@ -3036,7 +3842,7 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
                 <div className="card">
                   <h3>Quem deve a quem</h3>
                   <p className="mut">
-                    Total gasto: <b>{brl(tot)}</b>
+                    Total gasto: <b>{fmtMoney(tot)}</b>
                   </p>
                   {acc.length > 0 ? (
                     <ul>
@@ -3050,7 +3856,7 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
                   {Object.keys(saldo).map((n) => (
                     <div className="mut" key={n}>
                       {n}: {saldo[n] >= 0 ? 'tem a receber ' : 'deve '}
-                      {brl(Math.abs(saldo[n]))}
+                      {fmtMoney(Math.abs(saldo[n]))}
                     </div>
                   ))}
                 </div>
@@ -3062,7 +3868,7 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
                     G.map((g) => (
                       <div className="row-item" key={g.id}>
                         <div>
-                          <b>{g.desc}</b> · {brl(g.valor)}
+                          <b>{g.desc}</b> · {fmtMoney(g.valor)}
                           <div className="mut">
                             Pago por {g.pagador} · dividido entre{' '}
                             {arr<string>(g.dividir).join(', ') || 'todos'}
@@ -3070,7 +3876,7 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
                         </div>
                         <button
                           className="x-btn"
-                          aria-label="Apagar"
+                          aria-label={`Apagar gasto ${g.desc}`}
                           onClick={() => handleDelGasto(g.id)}
                         >
                           ×
@@ -3227,7 +4033,127 @@ Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"a
         </section>
       )}
 
-      {toastMsg && <div className="toast-box">{toastMsg}</div>}
+      {/* #3 CONVERSA COM O AGENTE: Botão flutuante e janela de chat */}
+      <button
+        className="chat-fab"
+        onClick={() => setChatOpen((v) => !v)}
+        aria-label="Perguntar ao agente de viagem"
+        aria-expanded={chatOpen}
+      >
+        {chatOpen ? '✕ Fechar chat' : '💬 Perguntar ao agente'}
+      </button>
+
+      {chatOpen && (
+        <aside className="chat-panel" role="dialog" aria-label="Conversa com o agente de viagem">
+          <div
+            style={{
+              padding: '12px 14px',
+              borderBottom: '1px solid var(--line)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              background: 'var(--bg)',
+            }}
+          >
+            <div>
+              <b style={{ fontSize: '0.95rem' }}>💬 Agente de Viagem</b>
+              <div className="mut" style={{ fontSize: '0.75rem' }}>
+                Viagem: {activeViagem?.nome || 'Nossa Viagem'}
+              </div>
+            </div>
+            <button
+              className="x-btn"
+              onClick={() => setChatOpen(false)}
+              aria-label="Fechar conversa"
+            >
+              ×
+            </button>
+          </div>
+
+          <div
+            style={{
+              flex: 1,
+              overflowY: 'auto',
+              padding: 12,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 10,
+            }}
+          >
+            {chatMsgs.map((m, idx) => (
+              <div
+                key={idx}
+                style={{
+                  alignSelf: m.role === 'user' ? 'flex-end' : 'flex-start',
+                  maxWidth: '90%',
+                  background: m.role === 'user' ? 'var(--acc)' : 'var(--bg)',
+                  color: m.role === 'user' ? '#fff' : 'var(--ink)',
+                  padding: '8px 12px',
+                  borderRadius: 12,
+                  fontSize: '0.875rem',
+                }}
+              >
+                <div>{m.texto}</div>
+                {m.dicas && m.dicas.length > 0 && (
+                  <ul style={{ marginTop: 6, paddingLeft: 18 }}>
+                    {m.dicas.map((d, di) => (
+                      <li key={di}>{d}</li>
+                    ))}
+                  </ul>
+                )}
+                {m.conferir && (
+                  <div
+                    style={{
+                      marginTop: 6,
+                      fontSize: '0.78rem',
+                      opacity: 0.9,
+                      borderTop: '1px solid var(--line)',
+                      paddingTop: 4,
+                    }}
+                  >
+                    <b>O que conferir:</b> {m.conferir}
+                  </div>
+                )}
+              </div>
+            ))}
+            {chatLoading && <div className="mut">O agente está pensando…</div>}
+          </div>
+
+          <div
+            style={{
+              padding: 10,
+              borderTop: '1px solid var(--line)',
+              display: 'flex',
+              gap: 6,
+            }}
+          >
+            <input
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSendChat();
+              }}
+              placeholder="Pergunte sobre roteiro, custos…"
+              aria-label="Digite sua pergunta para o agente"
+              style={{ margin: 0, flex: 1 }}
+            />
+            <button
+              className="btn"
+              style={{ margin: 0, padding: '8px 14px' }}
+              disabled={chatLoading}
+              onClick={handleSendChat}
+            >
+              Enviar
+            </button>
+          </div>
+        </aside>
+      )}
+
+      {toastMsg && (
+        <div className="toast-box" role="status" aria-live="polite">
+          {toastMsg}
+        </div>
+      )}
     </div>
   );
 }

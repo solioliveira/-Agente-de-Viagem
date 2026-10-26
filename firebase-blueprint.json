@@ -11,6 +11,30 @@
           "minLength": 1,
           "maxLength": 100
         },
+        "destino": {
+          "type": "string",
+          "description": "Destino opcional da viagem",
+          "maxLength": 100
+        },
+        "dataInicio": {
+          "type": "string",
+          "description": "Data aproximada da viagem",
+          "maxLength": 20
+        },
+        "moeda": {
+          "type": "string",
+          "description": "Moeda estrangeira opcional (ex: USD, EUR)",
+          "maxLength": 10
+        },
+        "cotacao": {
+          "type": "number",
+          "description": "Cotação da moeda estrangeira em reais"
+        },
+        "idadesCriancas": {
+          "type": "string",
+          "description": "Idades das crianças na viagem",
+          "maxLength": 50
+        },
         "criadorUid": {
           "type": "string",
           "description": "UID de quem criou a viagem",
@@ -42,7 +66,7 @@
     },
     "ItemRoteiro": {
       "title": "ItemRoteiro",
-      "description": "Item do roteiro compartilhado (passagem, hotel, restaurante, passeio, gasto, nota, destino).",
+      "description": "Item do roteiro compartilhado (passagem, hotel, restaurante, passeio, seguro, gasto, nota, destino).",
       "type": "object",
       "properties": {
         "viagemId": {
@@ -53,7 +77,7 @@
         },
         "tipo": {
           "type": "string",
-          "enum": ["passagem", "hotel", "restaurante", "passeio", "gasto", "nota", "destino"],
+          "enum": ["passagem", "hotel", "restaurante", "passeio", "seguro", "gasto", "nota", "destino"],
           "minLength": 1,
           "maxLength": 20
         },

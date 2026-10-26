@@ -3,11 +3,11 @@
 :root {
   --bg: #f7f3ec;
   --card: #ffffff;
-  --ink: #1f2a2e;
-  --mut: #66757a;
-  --acc: #0e7c86;
-  --acc2: #d9692c;
-  --line: #e4ddd0;
+  --ink: #1a2428;
+  --mut: #4b595e;
+  --acc: #0b6b74;
+  --acc2: #c85a1f;
+  --line: #dcd4c6;
   box-sizing: border-box;
   padding-top: env(safe-area-inset-top, 0px);
   padding-bottom: env(safe-area-inset-bottom, 0px);
@@ -17,11 +17,11 @@
   :root:not([data-theme="light"]) {
     --bg: #121a1c;
     --card: #1b2629;
-    --ink: #eaf0f1;
-    --mut: #9fb0b4;
-    --acc: #3fc1cc;
-    --acc2: #f0955f;
-    --line: #2b393d;
+    --ink: #eef4f5;
+    --mut: #b0c2c7;
+    --acc: #4cd0db;
+    --acc2: #f49b66;
+    --line: #2e3e42;
     color-scheme: dark;
   }
 }
@@ -29,12 +29,24 @@
 :root[data-theme="dark"] {
   --bg: #121a1c;
   --card: #1b2629;
-  --ink: #eaf0f1;
-  --mut: #9fb0b4;
-  --acc: #3fc1cc;
-  --acc2: #f0955f;
-  --line: #2b393d;
+  --ink: #eef4f5;
+  --mut: #b0c2c7;
+  --acc: #4cd0db;
+  --acc2: #f49b66;
+  --line: #2e3e42;
   color-scheme: dark;
+}
+
+html {
+  font-size: 16px;
+}
+
+html[data-font-scale="1"] {
+  font-size: 18px;
+}
+
+html[data-font-scale="2"] {
+  font-size: 20px;
 }
 
 * {
@@ -47,17 +59,18 @@ html, body {
   overflow-x: hidden;
   background: var(--bg);
   color: var(--ink);
-  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  line-height: 1.5;
 }
 
 .wrap {
   max-width: 860px;
   margin: 0 auto;
-  padding: 18px 16px 60px;
+  padding: 18px 16px 90px;
 }
 
 h1 {
-  font: 700 26px/1.2 Georgia, "Times New Roman", serif;
+  font: 700 1.625rem/1.2 Georgia, "Times New Roman", serif;
   margin: 6px 0 2px;
 }
 
@@ -91,11 +104,18 @@ h1 {
   background: var(--acc);
   border-color: var(--acc);
   color: #fff;
+  font-weight: 600;
+}
+
+@media (prefers-color-scheme: dark) {
+  .tabs button.on {
+    color: #0e1618;
+  }
 }
 
 .subtabs button {
   padding: 6px 12px;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .card {
@@ -114,8 +134,9 @@ h1 {
 
 label.field-label {
   display: block;
-  font-size: 13px;
+  font-size: 0.825rem;
   color: var(--mut);
+  font-weight: 500;
 }
 
 input:not([type="checkbox"]),
@@ -138,9 +159,15 @@ select {
   padding: 11px 18px;
   border-radius: 10px;
   font-weight: 600;
-  font-size: 16px;
+  font-size: 1rem;
   font-family: inherit;
   cursor: pointer;
+}
+
+@media (prefers-color-scheme: dark) {
+  .btn:not(.sec) {
+    color: #121a1c;
+  }
 }
 
 .btn.sec {
@@ -149,7 +176,7 @@ select {
   border: 1px solid var(--acc);
   margin-top: 8px;
   padding: 8px 14px;
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .btn:disabled {
@@ -159,16 +186,23 @@ select {
 
 .mut {
   color: var(--mut);
-  font-size: 14px;
+  font-size: 0.875rem;
 }
 
 .err {
-  color: #c0392b;
+  color: #d63031;
+  font-weight: 600;
+}
+
+@media (prefers-color-scheme: dark) {
+  .err {
+    color: #ff7675;
+  }
 }
 
 .tag {
   display: inline-block;
-  font-size: 12px;
+  font-size: 0.75rem;
   border: 1px solid var(--acc);
   color: var(--acc);
   border-radius: 99px;
@@ -179,7 +213,7 @@ select {
 
 .cost {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 8px;
   margin: 10px 0;
 }
@@ -187,25 +221,25 @@ select {
 .cost > div {
   background: var(--bg);
   border-radius: 9px;
-  padding: 8px;
-  font-size: 13px;
+  padding: 8px 10px;
+  font-size: 0.8125rem;
   color: var(--mut);
 }
 
 .cost b {
   display: block;
   color: var(--ink);
-  font-size: 15px;
+  font-size: 0.95rem;
 }
 
 h3 {
   margin: 0 0 4px;
-  font: 700 20px Georgia, serif;
+  font: 700 1.25rem Georgia, serif;
 }
 
 h4 {
   margin: 12px 0 3px;
-  font-size: 14px;
+  font-size: 0.875rem;
   color: var(--acc);
   font-weight: 700;
 }
@@ -233,13 +267,13 @@ ul, ol {
   background: none;
   color: var(--mut);
   cursor: pointer;
-  font-size: 20px;
+  font-size: 1.25rem;
   line-height: 1;
   padding: 2px 6px;
 }
 
 .big {
-  font: 700 28px Georgia, serif;
+  font: 700 1.75rem Georgia, serif;
 }
 
 .toast-box {
@@ -251,9 +285,9 @@ ul, ol {
   color: var(--bg);
   padding: 10px 16px;
   border-radius: 10px;
-  font-size: 14px;
-  z-index: 50;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+  font-size: 0.875rem;
+  z-index: 60;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
 }
 
 .big-btn {
@@ -267,7 +301,7 @@ ul, ol {
   background: var(--bg);
   color: var(--ink);
   font-weight: 600;
-  font-size: 17px;
+  font-size: 1.0625rem;
   font-family: inherit;
   cursor: pointer;
 }
@@ -276,7 +310,7 @@ ul, ol {
   display: block;
   font-weight: 400;
   color: var(--mut);
-  font-size: 14px;
+  font-size: 0.875rem;
   margin-top: 3px;
 }
 
@@ -287,7 +321,7 @@ ul, ol {
   border-radius: 10px;
   padding: 10px 12px;
   color: var(--mut);
-  font-size: 14px;
+  font-size: 0.875rem;
   margin-bottom: 12px;
 }
 
@@ -298,6 +332,53 @@ details.adv {
 details.adv summary {
   cursor: pointer;
   color: var(--acc);
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.offline-banner {
+  background: rgba(200, 90, 31, 0.14);
+  border: 1px solid var(--acc2);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font-size: 0.875rem;
+  color: var(--ink);
+}
+
+.chat-fab {
+  position: fixed;
+  right: 16px;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  z-index: 45;
+  background: var(--acc);
+  color: #fff;
+  border: 0;
+  border-radius: 999px;
+  padding: 12px 18px;
+  font: 600 0.95rem system-ui, sans-serif;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
+
+@media (prefers-color-scheme: dark) {
+  .chat-fab {
+    color: #0e1618;
+  }
+}
+
+.chat-panel {
+  position: fixed;
+  right: 16px;
+  bottom: calc(70px + env(safe-area-inset-bottom, 0px));
+  width: min(400px, calc(100vw - 32px));
+  max-height: min(520px, calc(100vh - 120px));
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.28);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }

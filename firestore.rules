@@ -41,8 +41,13 @@ service cloud.firestore {
     // Validation Blueprint: Viagem
     function isValidViagem(data) {
       return data.keys().hasAll(['nome', 'criadorUid', 'criadorEmail', 'membros', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['nome', 'criadorUid', 'criadorEmail', 'membros', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['nome', 'destino', 'dataInicio', 'moeda', 'cotacao', 'idadesCriancas', 'criadorUid', 'criadorEmail', 'membros', 'createdAt', 'updatedAt'])
         && data.nome is string && data.nome.size() >= 1 && data.nome.size() <= 100
+        && (!('destino' in data) || (data.destino is string && data.destino.size() <= 100))
+        && (!('dataInicio' in data) || (data.dataInicio is string && data.dataInicio.size() <= 20))
+        && (!('moeda' in data) || (data.moeda is string && data.moeda.size() <= 10))
+        && (!('cotacao' in data) || (data.cotacao is number && data.cotacao >= 0 && data.cotacao <= 100000))
+        && (!('idadesCriancas' in data) || (data.idadesCriancas is string && data.idadesCriancas.size() <= 50))
         && data.criadorUid is string && data.criadorUid.size() >= 1 && data.criadorUid.size() <= 128
         && data.criadorEmail is string && data.criadorEmail.size() >= 3 && data.criadorEmail.size() <= 254
         && data.membros is list && data.membros.size() >= 1 && data.membros.size() <= 20
@@ -58,7 +63,7 @@ service cloud.firestore {
         && data.keys().hasOnly(['viagemId', 'tipo', 'titulo', 'valor', 'nota', 'data', 'autor', 'autorUid', 'ts', 'votos', 'comentarios', 'pago', 'prazo', 'createdAt', 'updatedAt'])
         && data.viagemId is string && data.viagemId.size() >= 1 && data.viagemId.size() <= 128 && data.viagemId == viagemId
         && data.tipo is string && data.tipo.size() >= 1 && data.tipo.size() <= 20
-        && data.tipo in ['passagem', 'hotel', 'restaurante', 'passeio', 'gasto', 'nota', 'destino']
+        && data.tipo in ['passagem', 'hotel', 'restaurante', 'passeio', 'seguro', 'gasto', 'nota', 'destino']
         && data.titulo is string && data.titulo.size() >= 1 && data.titulo.size() <= 200
         && data.valor is number && data.valor >= 0 && data.valor <= 100000000
         && data.nota is string && data.nota.size() <= 2000
@@ -157,15 +162,20 @@ service cloud.firestore {
       allow update: if isVerified()
         && isValidId(viagemId)
         && isValidViagem(incoming())
-        && existing().criadorUid == request.auth.uid
         && incoming().criadorUid == existing().criadorUid
         && incoming().criadorEmail == existing().criadorEmail
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
-          incoming().diff(existing()).affectedKeys().hasOnly(['membros', 'updatedAt'])
-          || incoming().diff(existing()).affectedKeys().hasOnly(['nome', 'updatedAt'])
-          || incoming().diff(existing()).affectedKeys().hasOnly(['nome', 'membros', 'updatedAt'])
+          (
+            existing().criadorUid == request.auth.uid
+            && incoming().diff(existing()).affectedKeys().hasOnly(['nome', 'destino', 'dataInicio', 'moeda', 'cotacao', 'idadesCriancas', 'membros', 'updatedAt'])
+          )
+          || (
+            (request.auth.token.email in existing().membros)
+            && incoming().membros == existing().membros
+            && incoming().diff(existing()).affectedKeys().hasOnly(['destino', 'dataInicio', 'moeda', 'cotacao', 'idadesCriancas', 'updatedAt'])
+          )
         );
       allow delete: if isVerified() && isValidId(viagemId) && existing().criadorUid == request.auth.uid;
 
