@@ -1,0 +1,298 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global Primitive Helpers
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerified() {
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email is string
+        && request.auth.token.email.size() >= 3
+        && request.auth.token.email.size() <= 254;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Master Gate: Relational Sync with Parent Viagem Document
+    function isTripMember(viagemId) {
+      return exists(/databases/$(database)/documents/viagens/$(viagemId))
+        && request.auth.token.email in get(/databases/$(database)/documents/viagens/$(viagemId)).data.membros;
+    }
+
+    // Validation Blueprint: Viagem
+    function isValidViagem(data) {
+      return data.keys().hasAll(['nome', 'criadorUid', 'criadorEmail', 'membros', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['nome', 'criadorUid', 'criadorEmail', 'membros', 'createdAt', 'updatedAt'])
+        && data.nome is string && data.nome.size() >= 1 && data.nome.size() <= 100
+        && data.criadorUid is string && data.criadorUid.size() >= 1 && data.criadorUid.size() <= 128
+        && data.criadorEmail is string && data.criadorEmail.size() >= 3 && data.criadorEmail.size() <= 254
+        && data.membros is list && data.membros.size() >= 1 && data.membros.size() <= 20
+        && data.membros[0] is string && data.membros[0].size() >= 3 && data.membros[0].size() <= 254
+        && data.criadorEmail in data.membros
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: ItemRoteiro
+    function isValidItem(data, viagemId) {
+      return data.keys().hasAll(['viagemId', 'tipo', 'titulo', 'valor', 'nota', 'data', 'autor', 'autorUid', 'ts', 'votos', 'comentarios', 'pago', 'prazo', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['viagemId', 'tipo', 'titulo', 'valor', 'nota', 'data', 'autor', 'autorUid', 'ts', 'votos', 'comentarios', 'pago', 'prazo', 'createdAt', 'updatedAt'])
+        && data.viagemId is string && data.viagemId.size() >= 1 && data.viagemId.size() <= 128 && data.viagemId == viagemId
+        && data.tipo is string && data.tipo.size() >= 1 && data.tipo.size() <= 20
+        && data.tipo in ['passagem', 'hotel', 'restaurante', 'passeio', 'gasto', 'nota', 'destino']
+        && data.titulo is string && data.titulo.size() >= 1 && data.titulo.size() <= 200
+        && data.valor is number && data.valor >= 0 && data.valor <= 100000000
+        && data.nota is string && data.nota.size() <= 2000
+        && data.data is string && data.data.size() <= 20
+        && data.autor is string && data.autor.size() >= 1 && data.autor.size() <= 254
+        && data.autorUid is string && data.autorUid.size() >= 1 && data.autorUid.size() <= 128
+        && data.ts is number && data.ts >= 0
+        && data.votos is list && data.votos.size() <= 50
+        && (data.votos.size() == 0 || (data.votos[0] is string && data.votos[0].size() >= 1 && data.votos[0].size() <= 254))
+        && data.comentarios is list && data.comentarios.size() <= 100
+        && (data.comentarios.size() == 0 || (
+          data.comentarios[0] is map
+          && data.comentarios[0].keys().hasAll(['autor', 'texto', 'ts'])
+          && data.comentarios[0].keys().hasOnly(['autor', 'texto', 'ts'])
+          && data.comentarios[0].autor is string && data.comentarios[0].autor.size() >= 1 && data.comentarios[0].autor.size() <= 254
+          && data.comentarios[0].texto is string && data.comentarios[0].texto.size() >= 1 && data.comentarios[0].texto.size() <= 500
+          && data.comentarios[0].ts is number
+        ))
+        && data.pago is bool
+        && data.prazo is string && data.prazo.size() <= 20
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: MonitorPreco
+    function isValidMonitor(data, viagemId) {
+      return data.keys().hasAll(['viagemId', 'nome', 'data', 'alvo', 'regs', 'ts', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['viagemId', 'nome', 'data', 'alvo', 'regs', 'ts', 'createdAt', 'updatedAt'])
+        && data.viagemId is string && data.viagemId.size() >= 1 && data.viagemId.size() <= 128 && data.viagemId == viagemId
+        && data.nome is string && data.nome.size() >= 1 && data.nome.size() <= 150
+        && data.data is string && data.data.size() <= 20
+        && data.alvo is number && data.alvo >= 0 && data.alvo <= 100000000
+        && data.regs is list && data.regs.size() <= 200
+        && (data.regs.size() == 0 || (
+          data.regs[0] is map
+          && data.regs[0].keys().hasAll(['valor', 'ts'])
+          && data.regs[0].keys().hasOnly(['valor', 'ts'])
+          && data.regs[0].valor is number && data.regs[0].valor >= 0
+          && data.regs[0].ts is number
+        ))
+        && data.ts is number && data.ts >= 0
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: GastoGrupo
+    function isValidGasto(data, viagemId) {
+      return data.keys().hasAll(['viagemId', 'desc', 'valor', 'pagador', 'dividir', 'ts', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['viagemId', 'desc', 'valor', 'pagador', 'dividir', 'ts', 'createdAt', 'updatedAt'])
+        && data.viagemId is string && data.viagemId.size() >= 1 && data.viagemId.size() <= 128 && data.viagemId == viagemId
+        && data.desc is string && data.desc.size() >= 1 && data.desc.size() <= 200
+        && data.valor is number && data.valor > 0 && data.valor <= 100000000
+        && data.pagador is string && data.pagador.size() >= 1 && data.pagador.size() <= 80
+        && data.dividir is list && data.dividir.size() >= 1 && data.dividir.size() <= 30
+        && data.dividir[0] is string && data.dividir[0].size() >= 1 && data.dividir[0].size() <= 80
+        && data.ts is number && data.ts >= 0
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: ItemChecklist
+    function isValidChecklist(data, viagemId) {
+      return data.keys().hasAll(['viagemId', 'cat', 'texto', 'feito', 'ts', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['viagemId', 'cat', 'texto', 'feito', 'ts', 'createdAt', 'updatedAt'])
+        && data.viagemId is string && data.viagemId.size() >= 1 && data.viagemId.size() <= 128 && data.viagemId == viagemId
+        && data.cat is string && data.cat.size() >= 1 && data.cat.size() <= 60
+        && data.texto is string && data.texto.size() >= 1 && data.texto.size() <= 250
+        && data.feito is bool
+        && data.ts is number && data.ts >= 0
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: PessoasGrupo
+    function isValidPessoas(data, viagemId) {
+      return data.keys().hasAll(['viagemId', 'nomes', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['viagemId', 'nomes', 'createdAt', 'updatedAt'])
+        && data.viagemId is string && data.viagemId.size() >= 1 && data.viagemId.size() <= 128 && data.viagemId == viagemId
+        && data.nomes is list && data.nomes.size() >= 1 && data.nomes.size() <= 30
+        && data.nomes[0] is string && data.nomes[0].size() >= 1 && data.nomes[0].size() <= 80
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Viagens Collection
+    match /viagens/{viagemId} {
+      allow get: if isVerified() && isValidId(viagemId) && (request.auth.token.email in existing().membros);
+      allow list: if isVerified() && (request.auth.token.email in resource.data.membros);
+      allow create: if isVerified()
+        && isValidId(viagemId)
+        && isValidViagem(incoming())
+        && incoming().criadorUid == request.auth.uid
+        && incoming().criadorEmail == request.auth.token.email
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isVerified()
+        && isValidId(viagemId)
+        && isValidViagem(incoming())
+        && existing().criadorUid == request.auth.uid
+        && incoming().criadorUid == existing().criadorUid
+        && incoming().criadorEmail == existing().criadorEmail
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['membros', 'updatedAt'])
+          || incoming().diff(existing()).affectedKeys().hasOnly(['nome', 'updatedAt'])
+          || incoming().diff(existing()).affectedKeys().hasOnly(['nome', 'membros', 'updatedAt'])
+        );
+      allow delete: if isVerified() && isValidId(viagemId) && existing().criadorUid == request.auth.uid;
+
+      // Subcollection: itens
+      match /itens/{itemId} {
+        allow get: if isVerified() && isValidId(viagemId) && isValidId(itemId) && isTripMember(viagemId);
+        allow list: if isVerified() && resource.data.viagemId == viagemId && isTripMember(viagemId);
+        allow create: if isVerified()
+          && isValidId(viagemId)
+          && isValidId(itemId)
+          && isValidItem(incoming(), viagemId)
+          && incoming().autorUid == request.auth.uid
+          && incoming().autor == request.auth.token.email
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isTripMember(viagemId);
+        allow update: if isVerified()
+          && isValidId(viagemId)
+          && isValidId(itemId)
+          && isValidItem(incoming(), viagemId)
+          && incoming().viagemId == existing().viagemId
+          && incoming().autorUid == existing().autorUid
+          && incoming().autor == existing().autor
+          && incoming().ts == existing().ts
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && (
+            incoming().diff(existing()).affectedKeys().hasOnly(['votos', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['comentarios', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['pago', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['prazo', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['pago', 'prazo', 'updatedAt'])
+          )
+          && isTripMember(viagemId);
+        allow delete: if isVerified() && isValidId(viagemId) && isValidId(itemId) && isTripMember(viagemId);
+      }
+
+      // Subcollection: monitores
+      match /monitores/{monitorId} {
+        allow get: if isVerified() && isValidId(viagemId) && isValidId(monitorId) && isTripMember(viagemId);
+        allow list: if isVerified() && resource.data.viagemId == viagemId && isTripMember(viagemId);
+        allow create: if isVerified()
+          && isValidId(viagemId)
+          && isValidId(monitorId)
+          && isValidMonitor(incoming(), viagemId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isTripMember(viagemId);
+        allow update: if isVerified()
+          && isValidId(viagemId)
+          && isValidId(monitorId)
+          && isValidMonitor(incoming(), viagemId)
+          && incoming().viagemId == existing().viagemId
+          && incoming().nome == existing().nome
+          && incoming().data == existing().data
+          && incoming().alvo == existing().alvo
+          && incoming().ts == existing().ts
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['regs', 'updatedAt'])
+          && isTripMember(viagemId);
+        allow delete: if isVerified() && isValidId(viagemId) && isValidId(monitorId) && isTripMember(viagemId);
+      }
+
+      // Subcollection: gastos
+      match /gastos/{gastoId} {
+        allow get: if isVerified() && isValidId(viagemId) && isValidId(gastoId) && isTripMember(viagemId);
+        allow list: if isVerified() && resource.data.viagemId == viagemId && isTripMember(viagemId);
+        allow create: if isVerified()
+          && isValidId(viagemId)
+          && isValidId(gastoId)
+          && isValidGasto(incoming(), viagemId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isTripMember(viagemId);
+        allow update: if false;
+        allow delete: if isVerified() && isValidId(viagemId) && isValidId(gastoId) && isTripMember(viagemId);
+      }
+
+      // Subcollection: checklist
+      match /checklist/{checkId} {
+        allow get: if isVerified() && isValidId(viagemId) && isValidId(checkId) && isTripMember(viagemId);
+        allow list: if isVerified() && resource.data.viagemId == viagemId && isTripMember(viagemId);
+        allow create: if isVerified()
+          && isValidId(viagemId)
+          && isValidId(checkId)
+          && isValidChecklist(incoming(), viagemId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isTripMember(viagemId);
+        allow update: if isVerified()
+          && isValidId(viagemId)
+          && isValidId(checkId)
+          && isValidChecklist(incoming(), viagemId)
+          && incoming().viagemId == existing().viagemId
+          && incoming().cat == existing().cat
+          && incoming().texto == existing().texto
+          && incoming().ts == existing().ts
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['feito', 'updatedAt'])
+          && isTripMember(viagemId);
+        allow delete: if isVerified() && isValidId(viagemId) && isValidId(checkId) && isTripMember(viagemId);
+      }
+
+      // Subcollection: meta (document pessoas)
+      match /meta/{metaId} {
+        allow get: if isVerified() && isValidId(viagemId) && metaId == 'pessoas' && isTripMember(viagemId);
+        allow list: if false;
+        allow create: if isVerified()
+          && isValidId(viagemId)
+          && metaId == 'pessoas'
+          && isValidPessoas(incoming(), viagemId)
+          && incoming().createdAt == request.time
+          && incoming().updatedAt == request.time
+          && isTripMember(viagemId);
+        allow update: if isVerified()
+          && isValidId(viagemId)
+          && metaId == 'pessoas'
+          && isValidPessoas(incoming(), viagemId)
+          && incoming().viagemId == existing().viagemId
+          && incoming().createdAt == existing().createdAt
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['nomes', 'updatedAt'])
+          && isTripMember(viagemId);
+        allow delete: if isVerified() && isValidId(viagemId) && metaId == 'pessoas' && isTripMember(viagemId);
+      }
+    }
+  }
+}

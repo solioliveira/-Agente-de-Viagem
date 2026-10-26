@@ -1,0 +1,6 @@
+{
+  "name": "Agente de Viagem",
+  "description": "Viagem boa gastando menos: férias, fins de semana, milhas e salas VIP, com roteiro compartilhado em tempo real.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

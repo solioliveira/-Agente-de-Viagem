@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Agente de Viagem</title>
+<style>
+:root{--bg:#f7f3ec;--card:#fff;--ink:#1f2a2e;--mut:#66757a;--acc:#0e7c86;--acc2:#d9692c;--line:#e4ddd0;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121a1c;--card:#1b2629;--ink:#eaf0f1;--mut:#9fb0b4;--acc:#3fc1cc;--acc2:#f0955f;--line:#2b393d;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#121a1c;--card:#1b2629;--ink:#eaf0f1;--mut:#9fb0b4;--acc:#3fc1cc;--acc2:#f0955f;--line:#2b393d;color-scheme:dark}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:860px;margin:0 auto;padding:18px 16px 60px}
+h1{font:700 26px/1.2 Georgia,"Times New Roman",serif;margin:6px 0 2px}
+.sub{color:var(--mut);margin:0 0 14px}
+.tabs{display:flex;gap:6px;overflow-x:auto;margin-bottom:14px}
+.tabs button{flex:none;border:1px solid var(--line);background:var(--card);color:var(--ink);padding:9px 14px;border-radius:999px;font:inherit;cursor:pointer}
+.tabs button.on{background:var(--acc);border-color:var(--acc);color:#fff}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+label{display:block;font-size:13px;color:var(--mut)}
+input,select{width:100%;margin-top:3px;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--ink);font:inherit}
+.btn{margin-top:12px;border:0;background:var(--acc2);color:#fff;padding:11px 18px;border-radius:10px;font-weight:600;font-size:16px;font-family:inherit;cursor:pointer}
+.btn.sec{background:transparent;color:var(--acc);border:1px solid var(--acc);margin-top:8px;padding:8px 14px;font-size:14px}
+.btn:disabled{opacity:.5}
+.mut{color:var(--mut);font-size:14px}.err{color:#c0392b}
+.tag{display:inline-block;font-size:12px;border:1px solid var(--acc);color:var(--acc);border-radius:99px;padding:1px 9px;margin-left:6px;vertical-align:middle}
+.cost{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin:10px 0}
+.cost div{background:var(--bg);border-radius:9px;padding:8px;font-size:13px;color:var(--mut)}.cost b{display:block;color:var(--ink);font-size:15px}
+h3{margin:0 0 4px;font:700 20px Georgia,serif}h4{margin:12px 0 3px;font-size:14px;color:var(--acc)}
+ul{margin:4px 0;padding-left:20px}
+.row{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--line)}
+.row:last-child{border:0}.x{border:0;background:none;color:var(--mut);cursor:pointer;font-size:18px}
+.big{font:700 28px Georgia,serif}
+#toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;font-size:14px;display:none;z-index:5}
+.big-btn{display:block;width:100%;text-align:left;margin:10px 0;padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--bg);color:var(--ink);font-weight:600;font-size:17px;font-family:inherit;cursor:pointer}.big-btn small{display:block;font-weight:400;color:var(--mut);font-size:14px;margin-top:3px}
+.help{background:var(--bg);border-radius:10px;padding:10px 12px;color:var(--mut);font-size:14px;margin-bottom:12px}
+details.adv{margin-top:10px}details.adv summary{cursor:pointer;color:var(--acc)}
+#subnav button{padding:6px 12px;font-size:14px}
+.sec-view{display:none}.sec-view.on{display:block}
+</style></head><body><div class="wrap">
+<h1>✈️ Agente de Viagem</h1>
+<p class="sub">Viagem boa gastando menos: férias, fins de semana, milhas e salas VIP, com roteiro compartilhado.</p>
+<div class="tabs" id="nav"></div><div class="tabs" id="subnav"></div>
+
+<section id="home" class="sec-view on"><div class="card"><h3>O que você quer fazer?</h3>
+<button class="big-btn" data-go="ferias">✈️ Planejar uma viagem de férias<small>Diga quando e quantos vão. O app sugere destinos, custos e roteiro.</small></button>
+<button class="big-btn" data-go="fds">🌿 Ideia para o fim de semana<small>Escapadas perto de casa, para casal ou família.</small></button>
+<button class="big-btn" data-go="roteiro">📋 Abrir nosso roteiro<small>Passagens, hotéis e passeios juntos, compartilhado com quem viaja com você.</small></button></div></section>
+<section id="ferias" class="sec-view">
+<div class="card"><div class="grid">
+<label>Cidade de saída<input id="f_saida" placeholder="Ex.: sua cidade"></label>
+<label>Quando (mais ou menos)<input id="f_quando" placeholder="Ex.: julho de 2027"></label>
+<label>Dias de viagem<input id="f_dias" type="number" value="10" min="2"></label>
+<label>Adultos<input id="f_adultos" type="number" value="2" min="1"></label>
+<label>Idades das crianças<input id="f_criancas" placeholder="Ex.: 4, 9 (vazio = sem)"></label>
+<label>Tipo<select id="f_tipo"><option>nacional e internacional</option><option>só nacional</option><option>só internacional</option></select></label>
+<label>Orçamento total (R$)<input id="f_orc" type="number" placeholder="Ex.: 25000"></label>
+<label>Milhas disponíveis<input id="f_milhas" type="number" placeholder="Ex.: 80000"></label>
+<label>Estilo / preferências<input id="f_estilo" placeholder="Praia, cultura, resort…"></label>
+<label>Foco<select id="f_foco"><option>Econômico (melhor custo-benefício)</option><option>Equilibrado</option><option>Conforto</option></select></label></div>
+<button class="btn" id="f_go">Sugerir destinos</button>
+<p class="mut">Valores são estimativas gerais, sem preços em tempo real. Confirme nos sites antes de comprar.</p></div>
+<div id="f_out"></div></section>
+
+<section id="fds" class="sec-view">
+<div class="card"><div class="grid">
+<label>Cidade de saída<input id="w_saida" placeholder="Ex.: sua cidade"></label>
+<label>Com quem<select id="w_perfil"><option>casal</option><option>família com criança</option><option>amigos</option></select></label>
+<label>Idades das crianças<input id="w_criancas" placeholder="Ex.: 5"></label>
+<label>Distância<select id="w_raio"><option>até 1h30 de carro</option><option>até 3h de carro</option><option>até 5h de carro</option><option>qualquer, de avião</option></select></label>
+<label>Orçamento (R$)<input id="w_orc" type="number" placeholder="Ex.: 1500"></label>
+<label>Quando<input id="w_quando" placeholder="Este fim de semana"></label>
+<label>Foco<select id="w_foco"><option>Econômico (melhor custo-benefício)</option><option>Equilibrado</option><option>Conforto</option></select></label></div>
+<button class="btn" id="w_go">Sugerir escapadas</button> <button class="btn sec" id="w_last">Escapada de última hora</button><p class="mut">A última hora usa o próximo fim de semana e o clima típico da época. O app não vê a previsão do tempo: confira antes de sair.</p></div>
+<div id="w_out"></div></section>
+
+<section id="roteiro" class="sec-view">
+<div class="card"><h3>Roteiro compartilhado</h3>
+<p class="mut" id="sharehint">Para o cônjuge editar junto: no menu Compartilhar desta página, convide a pessoa com permissão de colaboração. Tudo que um adicionar aparece para o outro.</p>
+<div class="grid">
+<label>Tipo<select id="i_tipo"><option value="passagem">Passagem</option><option value="hotel">Hotel / resort</option><option value="restaurante">Restaurante</option><option value="passeio">Passeio</option><option value="gasto">Outro gasto</option><option value="nota">Nota / ideia</option></select></label>
+<label>Título<input id="i_titulo" placeholder="Ex.: Voo GRU–LIS"></label>
+<label>Valor (R$)<input id="i_valor" type="number" placeholder="0"></label>
+<label>Data<input id="i_data" type="date"></label>
+<label>Detalhe ou link<input id="i_nota"></label></div>
+<button class="btn" id="i_add">Adicionar</button></div>
+<div class="card"><h3>Exportar</h3><p class="mut">Gere um resumo do roteiro para quem não tem acesso ao app.</p><button class="btn sec" id="x_wa">WhatsApp</button> <button class="btn sec" id="x_copy">Copiar texto</button> <button class="btn sec" id="x_pdf">Baixar PDF</button></div><div class="card" id="i_agenda"></div><div class="card" id="i_list"></div></section>
+
+<section id="mapa" class="sec-view"><div class="card"><h3>Mapa e rotas</h3><p class="mut">Usa os passeios, restaurantes e hotéis do roteiro. É um mapa esquemático, com posições aproximadas estimadas pela IA, não um mapa real. Os links abrem o trajeto no Google Maps.</p><div class="grid"><label>Cidade ou região<input id="mp_cidade" placeholder="Ex.: Lisboa"></label><label>Dias disponíveis<input id="mp_dias" type="number" value="3" min="1"></label></div><button class="btn" id="mp_go">Agrupar por proximidade</button><div id="mp_out"></div></div></section>
+
+<section id="gastos" class="sec-view"><div class="card"><h3>Divisão de gastos</h3><label>Quem divide (separe por vírgula)<input id="g_pess" placeholder="Ex.: Ana, Bruno, Carla"></label><button class="btn sec" id="g_save">Salvar pessoas</button>
+<div class="grid" style="margin-top:10px"><label>Descrição<input id="g_desc"></label><label>Valor (R$)<input id="g_val" type="number"></label><label>Quem pagou<select id="g_pag"></select></label></div><div id="g_div" style="margin-top:8px"></div><button class="btn" id="g_add">Registrar gasto</button></div><div class="card" id="g_res"></div><div class="card" id="g_list"></div></section>
+
+<section id="check" class="sec-view"><div class="card"><h3>Checklist de viagem</h3><div class="grid"><label>Destino<input id="k_dest"></label><label>Época<input id="k_epoca" placeholder="Ex.: julho"></label><label>Idades das crianças<input id="k_cri" placeholder="Vazio = sem"></label><label>Tipo<select id="k_tipo"><option>nacional</option><option>internacional</option></select></label></div><button class="btn" id="k_go">Gerar checklist</button><p class="mut">Documentos e vacinas variam por destino e mudam: confirme em fontes oficiais (consulado, Anvisa, posto de saúde) antes de viajar.</p>
+<div style="display:flex;gap:6px;margin-top:6px"><input id="k_novo" placeholder="Item extra (ex.: remédios)"><button class="btn sec" id="k_add" style="margin:0">Adicionar</button></div></div><div class="card" id="k_list"></div></section>
+
+<section id="comp" class="sec-view"><div class="card"><h3>Comparar destinos</h3><div class="grid">
+<label>Destino 1<input id="c_1"></label><label>Destino 2<input id="c_2"></label><label>Destino 3 (opcional)<input id="c_3"></label>
+<label>Saída<input id="c_saida" placeholder="Sua cidade"></label><label>Dias<input id="c_dias" type="number" value="7" min="2"></label><label>Viajantes<input id="c_pess" placeholder="Ex.: 2 adultos e 1 criança de 6"></label></div>
+<button class="btn" id="c_go">Comparar</button><p class="mut">Estimativas gerais, sem preços em tempo real.</p></div><div id="c_out"></div></section>
+
+<section id="datas" class="sec-view">
+<div class="card"><h3>Calendário de datas baratas</h3><div class="grid"><label>Destino<input id="d_dest"></label><label>Saída<input id="d_saida" placeholder="Sua cidade"></label><label>Dias<input id="d_dias" type="number" value="7" min="2"></label></div>
+<button class="btn" id="d_go">Ver melhores épocas</button><p class="mut">Mostra a sazonalidade típica (alta, média, baixa). Não é o preço de hoje: confira nos sites.</p><div id="d_out"></div></div>
+<div class="card"><h3>Monitor de preço</h3><p class="mut">O app não consulta preços sozinho. Você registra os valores que vê nos sites, e ele mostra se o preço caiu e se chegou no seu alvo. Fica compartilhado com quem edita o roteiro.</p>
+<div class="grid"><label>Rota ou hotel<input id="p_nome" placeholder="Ex.: Voo ida e volta"></label><label>Data da viagem<input id="p_data" type="date"></label><label>Preço-alvo (R$)<input id="p_alvo" type="number"></label></div>
+<button class="btn" id="p_add">Criar monitor</button><div id="p_list"></div></div></section>
+
+<section id="milhas" class="sec-view">
+<div class="card"><h3>Vale usar milhas?</h3>
+<div class="grid"><label>Preço em dinheiro (R$)<input id="m_preco" type="number"></label><label>Milhas pedidas<input id="m_milhas" type="number"></label><label>Taxas pagas em dinheiro (R$)<input id="m_taxas" type="number" value="0"></label><label>Quanto custa seu milheiro (R$)<input id="m_custo" type="number" placeholder="Ex.: 20"></label></div>
+<p id="m_res" class="mut" style="margin-top:10px">Preencha preço e milhas para comparar.</p></div>
+<div class="card"><h3>Estratégia de milhas com IA</h3><div class="grid"><label>Programas e saldo<input id="m_prog" placeholder="Ex.: 50 mil em um programa"></label><label>Cartões que você tem<input id="m_cart" placeholder="Ex.: cartão X, banco Y"></label><label>Viagem pretendida<input id="m_viag" placeholder="Destino e época"></label></div><button class="btn" id="m_go">Montar estratégia</button><div id="m_out"></div></div>
+<div class="card"><h3>Sala VIP gastando pouco</h3><ul>
+<li>Cartão de crédito: alguns dão acessos a salas (rede de salas ou salas próprias), em número limitado por ano. Veja o benefício no app do banco antes de pagar anuidade só por isso.</li>
+<li>Status em programa de fidelidade ou voo em classe executiva podem liberar as salas da companhia ou da aliança.</li>
+<li>Entrada avulsa: várias salas vendem acesso por um valor fixo. Compare com o que gastaria comendo no aeroporto.</li>
+<li>Assinatura de clube de salas só compensa se você voa várias vezes por ano.</li>
+<li>Confira se acompanhante e crianças entram de graça ou pagam à parte.</li>
+<li>Regras mudam com frequência: confirme no site do cartão ou da sala antes de contar com o benefício.</li></ul>
+<h3 style="margin-top:14px">Dicas rápidas de milhas</h3><ul>
+<li>Calcule o valor do milheiro antes de decidir: se a passagem em dinheiro estiver barata, pague em dinheiro e guarde as milhas.</li>
+<li>Milhas rendem mais em passagens caras (internacional, alta temporada, executiva).</li>
+<li>Compre ou transfira pontos só em promoção de bônus, e só o que vai usar em breve.</li>
+<li>Atenção a validade das milhas e às taxas de embarque.</li>
+<li>Dá para misturar: passagem em milhas e hotel em dinheiro, ou o contrário, conforme sair mais barato.</li></ul></div>
+</section>
+<section id="orc" class="sec-view"><div id="o_out"></div></section>
+<div id="toast"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</div>
+<script>
+const $=s=>document.querySelector(s);
+const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const brl=n=>Number(n||0).toLocaleString("pt-BR",{style:"currency",currency:"BRL",maximumFractionDigits:0});
+const arr=a=>Array.isArray(a)?a:[];
+let db=null,user=null,sample=null,me=null,items=[],sug=[],meses=6,maxB=0,openC={};
+const LBL={passagem:"Passagem",hotel:"Hotel",restaurante:"Restaurante",passeio:"Passeio",gasto:"Gasto",nota:"Nota",destino:"Destino"};
+
+function toast(m){const t=$("#toast");t.textContent=m;t.style.display="block";setTimeout(()=>t.style.display="none",3200)}
+const AREAS={home:{n:"Início",s:[["home",""]]},planejar:{n:"Planejar",s:[["ferias","Férias"],["fds","Fim de semana"],["comp","Comparar"],["datas","Datas e preços"]]},roteiro:{n:"Nosso roteiro",s:[["roteiro","Itens e agenda"],["mapa","Mapa"],["check","Checklist"]]},dinheiro:{n:"Dinheiro",s:[["orc","Orçamento"],["gastos","Dividir gastos"],["milhas","Milhas e VIP"]]}};
+const HELP={ferias:"Preencha o que souber e toque em Sugerir destinos. Os campos em \"Mais opções\" são opcionais.",fds:"Escolha com quem vai e o orçamento. Se estiver em cima da hora, use Escapada de última hora.",comp:"Digite 2 ou 3 destinos que você está em dúvida e veja qual compensa mais.",datas:"Veja em que época do ano costuma ser mais barato viajar para um destino.",roteiro:"Aqui vocês juntam passagens, hotéis e passeios. Tudo que um adicionar aparece para o outro.",mapa:"Agrupa os passeios do roteiro que ficam perto uns dos outros. Adicione os lugares na aba Itens e agenda antes.",check:"Gere uma lista do que levar e providenciar, e vá marcando o que já está pronto.",orc:"Veja quanto vai gastar, quanto guardar por mês e o que já foi pago.",gastos:"Para viagens em grupo: registre quem pagou cada gasto e veja quem deve a quem.",milhas:"Descubra se vale usar milhas e como entrar em sala VIP gastando pouco."};
+let area="home";
+function go(sec){const a=Object.keys(AREAS).find(k=>AREAS[k].s.some(x=>x[0]===sec))||"home";area=a;
+  $("#nav").innerHTML=Object.keys(AREAS).map(k=>'<button data-a="'+k+'"'+(k===a?' class="on"':'')+'>'+AREAS[k].n+'</button>').join("");
+  $("#subnav").innerHTML=a==="home"?"":AREAS[a].s.map(x=>'<button data-s="'+x[0]+'"'+(x[0]===sec?' class="on"':'')+'>'+x[1]+'</button>').join("");
+  document.querySelectorAll(".sec-view").forEach(s=>s.classList.toggle("on",s.id===sec));
+  const el=document.getElementById(sec);if(el&&HELP[sec]&&!el.querySelector(".help")){const h=document.createElement("div");h.className="help";h.textContent=HELP[sec];el.prepend(h)}
+  if(sec==="orc")renderOrc();window.scrollTo(0,0)}
+$("#nav").onclick=e=>{const a=e.target.dataset.a;if(a)go(AREAS[a].s[0][0])};
+$("#subnav").onclick=e=>{const s=e.target.dataset.s;if(s)go(s)};
+function maisOpcoes(ids){const g=$("#"+ids[0]).closest(".grid"),d=document.createElement("details"),inner=document.createElement("div");d.className="adv";d.innerHTML='<summary>Mais opções (opcional)</summary>';inner.className="grid";inner.style.marginTop="8px";ids.forEach(i=>inner.appendChild($("#"+i).closest("label")));d.appendChild(inner);g.after(d)}
+maisOpcoes(["f_tipo","f_milhas","f_estilo","f_foco"]);
+
+async function init(){
+  try{if(window.claude){db=await claude.use("db");user=await claude.use("user");sample=await claude.use("sample");}}catch(e){}
+  try{if(user)me=await user.id()}catch(e){}
+  if(db){
+    try{db.collection("itens").orderBy("ts","desc").onSnapshot(s=>{items=s.docs.map(d=>Object.assign({id:d.id},d.data()));renderItems();renderOrc()},()=>{db=null;renderItems()});}catch(e){db=null}
+  }
+  if(db){try{db.collection("gastos").orderBy("ts","desc").onSnapshot(s=>{gastos=s.docs.map(d=>Object.assign({id:d.id},d.data()));renderGastos()},()=>{});
+   db.collection("checklist").orderBy("ts","asc").onSnapshot(s=>{checks=s.docs.map(d=>Object.assign({id:d.id},d.data()));renderChecks()},()=>{});
+   db.doc("meta/pessoas").onSnapshot(s=>{pessoas=s.exists?arr(s.data().nomes):[];renderGastos()},()=>{})}catch(e){}}
+  if(db){try{db.collection("monitores").orderBy("ts","desc").onSnapshot(s=>{mons=s.docs.map(d=>Object.assign({id:d.id},d.data()));renderMons()},()=>{})}catch(e){}}
+  if(!db)$("#sharehint").textContent="Neste modo o roteiro fica só nesta tela (sem compartilhamento).";
+  renderItems();renderOrc();
+}
+
+function addItem(o){
+  o.ts=Date.now();o.autor=me||"";
+  if(db){db.collection("itens").add(o).catch(()=>toast("Sem permissão para editar este roteiro."))}
+  else{o.id="l"+o.ts+Math.random();items.unshift(o);renderItems();renderOrc()}
+}
+function delItem(id){
+  if(db){db.doc("itens/"+id).delete().catch(()=>toast("Sem permissão para apagar."))}
+  else{items=items.filter(i=>i.id!==id);renderItems();renderOrc()}
+}
+$("#i_add").onclick=()=>{
+  const t=$("#i_titulo").value.trim();if(!t)return toast("Dê um título ao item.");
+  addItem({tipo:$("#i_tipo").value,titulo:t,valor:Number($("#i_valor").value)||0,nota:$("#i_nota").value.trim(),data:$("#i_data").value});
+  ["i_titulo","i_valor","i_nota","i_data"].forEach(i=>$("#"+i).value="");
+};
+function renderItems(){
+  const el=$("#i_list");
+  if(!items.length){el.innerHTML='<p class="mut">Nada por aqui ainda. Adicione itens ou salve sugestões das outras abas.</p>';renderAgenda();return}
+  const total=items.reduce((s,i)=>s+(Number(i.valor)||0),0);
+  el.innerHTML='<p class="mut">Total estimado: <b>'+brl(total)+'</b></p>'+items.map(i=>
+    '<div class="row"><div><b>'+esc(i.titulo)+'</b><span class="tag">'+esc(LBL[i.tipo]||i.tipo)+'</span>'+
+    (i.valor?' <span class="mut">· '+brl(i.valor)+'</span>':'')+(i.data?' <span class="mut">· '+fmtD(i.data)+'</span>':'')+
+    (i.nota?'<div class="mut">'+esc(i.nota)+'</div>':'')+
+    '<div class="mut">'+(i.autor&&i.autor===me?"adicionado por você":(i.autor?"adicionado por outra pessoa":""))+'</div>'+actions(i)+'</div>'+
+    '<button class="x" data-del="'+esc(i.id)+'" aria-label="Apagar">×</button></div>').join("");renderAgenda();
+}
+$("#i_list").onclick=e=>{const d=e.target.dataset.del;if(d)delItem(d)};
+
+function renderOrc(){
+  const o=$("#o_out");
+  const ant=items.filter(i=>["passagem","hotel"].includes(i.tipo)).reduce((s,i)=>s+(+i.valor||0),0);
+  const dest=items.filter(i=>["restaurante","passeio","gasto"].includes(i.tipo)).reduce((s,i)=>s+(+i.valor||0),0);
+  const tot=ant+dest;
+  o.innerHTML='<div class="card"><h3>Quanto guardar</h3>'+
+   '<label>Meses até a viagem<input id="o_m" type="number" min="1" value="'+meses+'"></label><label>Meu limite de gasto (R$)<input id="o_max" type="number" value="'+(maxB||"")+'"></label>'+
+   '<div class="cost"><div>Total estimado<b>'+brl(tot)+'</b></div><div>Pagar antes (passagem + hotel)<b>'+brl(ant)+'</b></div><div>Guardar para gastar lá<b>'+brl(dest)+'</b></div></div>'+
+   '<p>Guardando por mês: <span class="big">'+brl(tot/Math.max(1,meses))+'</span></p>'+
+   (maxB?'<p>'+(tot<=maxB?'Dentro do limite, sobram <b>'+brl(maxB-tot)+'</b>.':'<b class="err">Acima do limite em '+brl(tot-maxB)+'.</b> Revise passagens e hospedagem, que pesam mais.')+'</p>':'')+'<p class="mut">Dica geral: passagem e hospedagem costumam ser as partes mais caras e as que mais sobem perto da data, então vale quitar essas primeiro e juntar o restante em paralelo. Confira se há cancelamento gratuito e compare pagar em dinheiro com usar milhas.</p></div><div class="card" id="o_plano"></div>';renderPlano();
+  $("#o_m").onchange=e=>{meses=Math.max(1,+e.target.value||1);renderOrc()};
+  $("#o_max").onchange=e=>{maxB=+e.target.value||0;renderOrc()};
+}
+
+async function ask(prompt,out,btn){
+  if(!sample){out.innerHTML='<p class="err">O assistente de IA não está disponível nesta visualização.</p>';return null}
+  btn.disabled=true;out.innerHTML='<p class="mut">Pensando nas melhores opções…</p>';
+  try{return await sample.json(prompt)}
+  catch(e){out.innerHTML='<p class="err">Não consegui gerar agora ('+esc(e&&e.code||"erro")+'). Tente de novo em instantes.</p>';return null}
+  finally{btn.disabled=false}
+}
+const LISTA=(t,a)=>arr(a).length?'<h4>'+t+'</h4><ul>'+arr(a).map(x=>'<li>'+esc(typeof x==="string"?x:(x.nome?x.nome+(x.tipo?" ("+x.tipo+")":"")+(x.faixa_diaria_brl?" · ~"+brl(x.faixa_diaria_brl)+"/noite":""):JSON.stringify(x)))+'</li>').join("")+'</ul>':"";
+
+$("#f_go").onclick=async()=>{
+  const v=i=>$("#"+i).value.trim();
+  const p=`Você é um agente de viagens brasileiro experiente. Responda SOMENTE com JSON válido, sem markdown.
+Perfil: saída de ${v("f_saida")||"cidade não informada"}; período ${v("f_quando")||"flexível"}; ${v("f_dias")} dias; ${v("f_adultos")} adulto(s); crianças com idades: ${v("f_criancas")||"nenhuma"}; tipo: ${v("f_tipo")}; orçamento total R$ ${v("f_orc")||"não informado"}; milhas: ${v("f_milhas")||"0"}; preferências: ${v("f_estilo")||"nenhuma"}.
+Foco: ${v("f_foco")}. Se o foco for econômico, priorize destinos e épocas com melhor custo-benefício (baixa temporada, datas flexíveis, aeroportos alternativos, hospedagem em apartamento ou pousada, bagagem e transfers) e explique como economizar sem estragar a viagem. Sugira 3 destinos adequados à época e à família. Todos os valores em reais (números), estimativas realistas e arredondadas para o total do grupo; não invente preços exatos nem prometa tarifas.
+Formato: {"sugestoes":[{"destino":"","pais":"","tipo":"nacional|internacional","porque":"","custos":{"passagens":0,"hospedagem":0,"alimentacao":0,"passeios":0,"transporte_local":0,"total":0},"hospedagem":[{"nome":"","tipo":"hotel|resort|pousada","faixa_diaria_brl":0}],"passagem":{"onde_comprar":"","milhas_ou_dinheiro":""},"pagar_antes":"","reserva_destino_brl":0,"roteiro":["Dia 1: ..."],"restaurantes":[""],"passeios":[""],"dicas_economia":[""],"economia_estimada_brl":0,"sala_vip_milhas":""}]}
+Em "milhas_ou_dinheiro" diga quando vale usar milhas considerando o saldo informado. Em "pagar_antes" diga o que convém quitar antecipadamente e o que guardar para gastar no destino. Roteiro resumido (até 6 itens). Em "dicas_economia" liste 3 a 5 ações concretas; em "economia_estimada_brl" o quanto isso pode reduzir o total; em "sala_vip_milhas" dê dica de milhas e de como acessar sala VIP nos aeroportos dessa viagem, sem afirmar regras exatas de cartões ou programas.`;
+  const r=await ask(p,$("#f_out"),$("#f_go"));
+  if(r)showDest(r.sugestoes||[],$("#f_out"));
+};
+function showDest(list,out){
+  sug=list;
+  out.innerHTML=list.map((s,i)=>{const c=s.custos||{},ps=s.passagem||{};
+   return '<div class="card"><h3>'+esc(s.destino)+'<span class="tag">'+esc(s.tipo||"")+'</span></h3><div class="mut">'+esc(s.pais||"")+'</div><p>'+esc(s.porque)+'</p>'+
+   '<div class="cost"><div>Passagens<b>'+brl(c.passagens)+'</b></div><div>Hospedagem<b>'+brl(c.hospedagem)+'</b></div><div>Alimentação<b>'+brl(c.alimentacao)+'</b></div><div>Passeios<b>'+brl(c.passeios)+'</b></div><div>Transporte<b>'+brl(c.transporte_local)+'</b></div><div>Total<b>'+brl(c.total)+'</b></div></div>'+
+   (s.economia_estimada_brl?'<p><b>Economia possível: ~'+brl(s.economia_estimada_brl)+'</b></p>':'')+LISTA("Como economizar",s.dicas_economia)+LISTA("Hospedagem",s.hospedagem)+
+   '<h4>Passagem</h4><p>'+esc(ps.onde_comprar||"")+' '+esc(ps.milhas_ou_dinheiro||"")+'</p>'+
+   (s.sala_vip_milhas?'<h4>Milhas e sala VIP</h4><p>'+esc(s.sala_vip_milhas)+'</p>':'')+'<h4>Pagar antes e guardar</h4><p>'+esc(s.pagar_antes||"")+(s.reserva_destino_brl?' Reserva para o destino: <b>'+brl(s.reserva_destino_brl)+'</b>.':'')+'</p>'+
+   LISTA("Roteiro",s.roteiro)+LISTA("Restaurantes",s.restaurantes)+LISTA("Passeios",s.passeios)+
+   '<button class="btn sec" data-save="'+i+'">Salvar no roteiro compartilhado</button></div>'}).join("")||'<p class="err">Sem resultados.</p>';
+}
+function saveDest(s){
+  const c=s.custos||{};
+  addItem({tipo:"destino",titulo:s.destino,valor:0,nota:arr(s.roteiro).join(" · ")});
+  [["passagem","passagens","Passagens"],["hotel","hospedagem","Hospedagem"],["gasto","alimentacao","Alimentação"],["passeio","passeios","Passeios"],["gasto","transporte_local","Transporte local"]]
+   .forEach(([t,k,n])=>{if(c[k])addItem({tipo:t,titulo:n+" (estim.) — "+s.destino,valor:+c[k],nota:""})});
+  arr(s.restaurantes).slice(0,3).forEach(r=>addItem({tipo:"restaurante",titulo:String(r),valor:0,nota:s.destino}));
+  toast("Salvo no roteiro compartilhado.");
+}
+
+$("#w_go").onclick=async()=>{
+  const v=i=>$("#"+i).value.trim();
+  const p=`Você é um agente de viagens brasileiro. Responda SOMENTE com JSON válido, sem markdown.
+Sugira 4 escapadas de fim de semana saindo de ${v("w_saida")||"cidade não informada"}, para ${v("w_perfil")}${v("w_criancas")?" (crianças: "+v("w_criancas")+" anos)":""}, ${$("#w_raio").value}, orçamento ~R$ ${v("w_orc")||"não informado"}, época: ${v("w_quando")||"este fim de semana"}. ${ultima?"Escapada de última hora para o próximo fim de semana: priorize opções fáceis de reservar em cima da hora e informe o clima típico da época (você não tem a previsão real: diga para conferir). ":""}Foco: ${v("w_foco")}; se for econômico, priorize opções baratas e dê dicas de como economizar. Inclua interior e opções perto. Valores em reais, estimativas gerais sem prometer preços exatos.
+Formato: {"opcoes":[{"destino":"","distancia":"","porque":"","roteiro":["Sábado: ...","Domingo: ..."],"restaurantes":[""],"hospedagem":"","custo_estimado_brl":0,"dica_crianca":"","dicas_economia":[""],"clima_tipico":""}]}`;
+  const r=await ask(p,$("#w_out"),$("#w_go"));if(!r)return;
+  sug=r.opcoes||[];
+  $("#w_out").innerHTML=sug.map((s,i)=>'<div class="card"><h3>'+esc(s.destino)+'</h3><div class="mut">'+esc(s.distancia||"")+' · ~'+brl(s.custo_estimado_brl)+'</div><p>'+esc(s.porque)+'</p>'+
+   LISTA("Roteiro",s.roteiro)+LISTA("Restaurantes",s.restaurantes)+
+   (s.hospedagem?'<h4>Onde ficar</h4><p>'+esc(s.hospedagem)+'</p>':'')+(s.clima_tipico?'<h4>Clima típico</h4><p>'+esc(s.clima_tipico)+'</p>':'')+LISTA("Como economizar",s.dicas_economia)+(s.dica_crianca?'<h4>Com criança</h4><p>'+esc(s.dica_crianca)+'</p>':'')+
+   '<button class="btn sec" data-wsave="'+i+'">Salvar no roteiro compartilhado</button></div>').join("")||'<p class="err">Sem resultados.</p>';
+};
+document.addEventListener("click",e=>{
+  const d=e.target.dataset;
+  if(d.pr){const i=document.getElementById("pv_"+d.pr),v=i?+i.value:0;if(v>0){const m=mons.find(x=>x.id===d.pr);monUpd(d.pr,{regs:arr(m&&m.regs).concat({v:v,ts:Date.now()})})}}
+  if(d.go)go(d.go);if(d.pd)monDel(d.pd);if(d.gd)cdel("gastos",d.gd);if(d.kd)cdel("checklist",d.kd);
+  if(d.vote)vote(d.vote);
+  if(d.cm){openC[d.cm]=!openC[d.cm];renderItems()}
+  if(d.cs){const inp=document.getElementById("ci_"+d.cs);if(inp&&inp.value.trim()){openC[d.cs]=true;comment(d.cs,inp.value.trim())}}
+  if(d.save!==undefined&&sug[d.save])saveDest(sug[d.save]);
+  if(d.wsave!==undefined&&sug[d.wsave]){const s=sug[d.wsave];addItem({tipo:"destino",titulo:s.destino+" (fim de semana)",valor:0,nota:arr(s.roteiro).join(" · ")});
+    if(s.custo_estimado_brl)addItem({tipo:"gasto",titulo:"Custo estimado — "+s.destino,valor:+s.custo_estimado_brl,nota:""});toast("Salvo no roteiro compartilhado.")}
+});
+const fmtD=d=>{const p=String(d).split("-");return p.length===3?p[2]+"/"+p[1]+"/"+p[0]:d};
+function mutate(id,f){const it=items.find(i=>i.id===id);if(!it)return;const patch=f(it);
+  if(db){db.doc("itens/"+id).update(patch).catch(()=>toast("Sem permissão para editar."))}
+  else{Object.assign(it,patch);renderItems();renderOrc()}}
+function vote(id){const u=me||"anon";mutate(id,it=>{const v=arr(it.votos);return{votos:v.includes(u)?v.filter(x=>x!==u):v.concat(u)}})}
+function comment(id,t){mutate(id,it=>({comentarios:arr(it.comentarios).concat({a:me||"",t:t,ts:Date.now()})}))}
+function actions(i){const v=arr(i.votos),c=arr(i.comentarios),u=me||"anon",op=openC[i.id];
+  return '<div style="margin-top:4px"><button class="btn'+(v.includes(u)?'':' sec')+'" style="margin:0 6px 0 0;padding:3px 10px;font-size:14px" data-vote="'+esc(i.id)+'">👍 '+v.length+'</button><button class="btn sec" style="margin:0;padding:3px 10px" data-cm="'+esc(i.id)+'">💬 '+c.length+'</button></div>'+
+  (op?c.map(x=>'<div class="mut">'+(x.a&&x.a===me?"Você":"Outra pessoa")+': '+esc(x.t)+'</div>').join("")+'<div style="display:flex;gap:6px"><input id="ci_'+esc(i.id)+'" placeholder="Comentar…"><button class="btn sec" style="margin:3px 0" data-cs="'+esc(i.id)+'">Enviar</button></div>':"")}
+function renderAgenda(){const a=items.filter(i=>i.data).sort((x,y)=>x.data<y.data?-1:1),el=$("#i_agenda");
+  if(!a.length){el.innerHTML='<h3>Agenda</h3><p class="mut">Adicione datas aos itens para montar a agenda da viagem.</p>';return}
+  let last="";el.innerHTML='<h3>Agenda</h3>'+a.map(i=>{const h=last!==i.data?'<h4>'+fmtD(i.data)+'</h4>':"";last=i.data;return h+'<div>• '+esc(i.titulo)+(i.valor?' <span class="mut">'+brl(i.valor)+'</span>':"")+'</div>'}).join("")}
+function calcMilhas(){const p=+$("#m_preco").value,m=+$("#m_milhas").value,t=+$("#m_taxas").value||0,c=+$("#m_custo").value,r=$("#m_res");
+  if(!p||!m){r.textContent="Preencha preço e milhas para comparar.";return}
+  const vm=(p-t)/m*1000;let h='Nesta emissão cada 1.000 milhas valem <b>'+brl(vm)+'</b>.';
+  if(c)h+=vm>c?' Você paga cerca de '+brl(c)+' pelo milheiro, então <b>vale usar milhas</b>.':' Isso é menos do que o milheiro custa para você: <b>melhor pagar em dinheiro</b> e guardar as milhas.';
+  else h+=' Informe quanto custa seu milheiro para comparar.';
+  r.innerHTML=h}
+["m_preco","m_milhas","m_taxas","m_custo"].forEach(id=>$("#"+id).oninput=calcMilhas);
+$("#m_go").onclick=async()=>{const v=i=>$("#"+i).value.trim();
+  const p=`Você é especialista em milhas e viagem econômica no Brasil. Responda SOMENTE com JSON válido, sem markdown.
+Perfil: programas e saldo: ${v("m_prog")||"não informado"}; cartões: ${v("m_cart")||"não informado"}; viagem pretendida: ${v("m_viag")||"não informada"}.
+Monte uma estratégia prática para gastar menos e viajar bem. Não afirme regras, preços ou benefícios exatos de cartões e programas; diga o que conferir.
+Formato: {"resumo":"","passos":[""],"como_juntar_milhas":[""],"sala_vip":[""],"alertas":[""]}`;
+  const r=await ask(p,$("#m_out"),$("#m_go"));if(!r)return;
+  $("#m_out").innerHTML='<p>'+esc(r.resumo)+'</p>'+LISTA("Passos",r.passos)+LISTA("Como juntar milhas",r.como_juntar_milhas)+LISTA("Sala VIP",r.sala_vip)+LISTA("Atenção",r.alertas)};
+let mons=[],ultima=false,gastos=[],checks=[],pessoas=[];
+const COL={gastos:{l:()=>gastos,r:()=>renderGastos()},checklist:{l:()=>checks,r:()=>renderChecks()}};
+function cadd(col,o){o.ts=o.ts||Date.now();if(db)db.collection(col).add(o).catch(()=>toast("Sem permissão para editar."));else{o.id=col+o.ts+Math.random();COL[col].l().push(o);COL[col].r()}}
+function cupd(col,id,patch){const x=COL[col].l().find(i=>i.id===id);if(!x)return;if(db)db.doc(col+"/"+id).update(patch).catch(()=>toast("Sem permissão para editar."));else{Object.assign(x,patch);COL[col].r()}}
+function cdel(col,id){if(db)db.doc(col+"/"+id).delete().catch(()=>toast("Sem permissão para apagar."));else{const l=COL[col].l(),i=l.findIndex(x=>x.id===id);if(i>=0)l.splice(i,1);COL[col].r()}}
+function addMon(o){o.ts=Date.now();o.regs=[];if(db)db.collection("monitores").add(o).catch(()=>toast("Sem permissão para editar."));else{o.id="m"+o.ts;mons.unshift(o);renderMons()}}
+function monUpd(id,patch){const m=mons.find(x=>x.id===id);if(!m)return;if(db)db.doc("monitores/"+id).update(patch).catch(()=>toast("Sem permissão para editar."));else{Object.assign(m,patch);renderMons()}}
+function monDel(id){if(db)db.doc("monitores/"+id).delete().catch(()=>toast("Sem permissão para apagar."));else{mons=mons.filter(m=>m.id!==id);renderMons()}}
+function renderMons(){const el=$("#p_list");if(!mons.length){el.innerHTML='<p class="mut">Nenhum monitor ainda.</p>';return}
+  el.innerHTML=mons.map(m=>{const r=arr(m.regs),last=r.length?r[r.length-1].v:null,min=r.length?Math.min(...r.map(x=>x.v)):null,first=r.length?r[0].v:null;
+  let st='<span class="mut">Sem registros ainda</span>';
+  if(last!=null){const ok=m.alvo&&last<=m.alvo,dv=last-first;st=(ok?'<b style="color:var(--acc)">Chegou no alvo!</b> ':'')+'Último: <b>'+brl(last)+'</b> · menor: '+brl(min)+(r.length>1?' · desde o primeiro registro: '+(dv<=0?'caiu ':'subiu ')+brl(Math.abs(dv)):'')+(m.alvo&&!ok?' · faltam '+brl(last-m.alvo)+' para o alvo':'')}
+  return '<div class="row"><div><b>'+esc(m.nome)+'</b>'+(m.data?' <span class="mut">· '+fmtD(m.data)+'</span>':'')+(m.alvo?' <span class="tag">alvo '+brl(m.alvo)+'</span>':'')+'<div>'+st+'</div><div style="display:flex;gap:6px;margin-top:4px"><input id="pv_'+esc(m.id)+'" type="number" placeholder="Preço visto hoje (R$)"><button class="btn sec" style="margin:0" data-pr="'+esc(m.id)+'">Registrar</button></div></div><button class="x" data-pd="'+esc(m.id)+'" aria-label="Apagar">×</button></div>'}).join("")}
+$("#p_add").onclick=()=>{const n=$("#p_nome").value.trim();if(!n)return toast("Dê um nome ao monitor.");addMon({nome:n,data:$("#p_data").value,alvo:+$("#p_alvo").value||0});["p_nome","p_data","p_alvo"].forEach(i=>$("#"+i).value="")};
+function renderPlano(){const el=$("#o_plano");if(!el)return;
+  const L=items.filter(i=>+i.valor>0).sort((a,b)=>(a.prazo||"9999")<(b.prazo||"9999")?-1:1);
+  if(!L.length){el.innerHTML='<h3>Plano de pagamento</h3><p class="mut">Adicione itens com valor no roteiro para acompanhar o que já foi pago.</p>';return}
+  const pago=L.filter(i=>i.pago).reduce((s,i)=>s+ +i.valor,0),tot=L.reduce((s,i)=>s+ +i.valor,0),falta=tot-pago,hoje=new Date().toLocaleDateString("sv-SE");
+  el.innerHTML='<h3>Plano de pagamento</h3><div class="cost"><div>Já pago<b>'+brl(pago)+'</b></div><div>Falta pagar<b>'+brl(falta)+'</b></div></div><p>Para quitar o que falta em '+meses+' meses: <b>'+brl(falta/Math.max(1,meses))+'</b> por mês.</p>'+
+  L.map(i=>{const atr=!i.pago&&i.prazo&&i.prazo<hoje;return '<div class="row"><div><label style="display:flex;gap:8px;align-items:center;color:var(--ink)"><input type="checkbox" style="width:auto;margin:0" data-pg="'+esc(i.id)+'"'+(i.pago?' checked':'')+'><span'+(i.pago?' style="text-decoration:line-through"':'')+'>'+esc(i.titulo)+' · '+brl(i.valor)+'</span></label>'+(atr?'<div class="err">Prazo vencido</div>':'')+'</div><input type="date" style="width:150px" data-pz="'+esc(i.id)+'" value="'+esc(i.prazo||"")+'"></div>'}).join("")+
+  '<p class="mut">Defina o prazo de cada pagamento, por exemplo a passagem antes de a tarifa subir e o hotel antes do fim do cancelamento gratuito.</p>'}
+document.addEventListener("change",e=>{const d=e.target.dataset;if(d.pg)mutate(d.pg,()=>({pago:e.target.checked}));if(d.pz)mutate(d.pz,()=>({prazo:e.target.value}));if(d.ck)cupd("checklist",d.ck,{feito:e.target.checked})});
+$("#d_go").onclick=async()=>{const v=i=>$("#"+i).value.trim();if(!v("d_dest"))return toast("Informe o destino.");
+  const p=`Você é especialista em viagem econômica. Responda SOMENTE com JSON válido, sem markdown.
+Destino: ${v("d_dest")}; saída de ${v("d_saida")||"cidade não informada"}; ${v("d_dias")} dias. Para os 12 meses do ano, classifique a sazonalidade típica de preços de passagem e hospedagem (alta, media ou baixa), com índice de 1 (mais barato) a 5 (mais caro) e uma nota curta sobre clima, feriados ou eventos. Não afirme preços atuais.
+Formato: {"resumo":"","melhores_meses":[""],"meses":[{"mes":"Janeiro","nivel":"alta|media|baixa","indice":1,"nota":""}]}`;
+  const r=await ask(p,$("#d_out"),$("#d_go"));if(!r)return;
+  const cor={baixa:"rgba(14,124,134,.28)",media:"rgba(224,170,60,.3)",alta:"rgba(217,105,44,.3)"};
+  $("#d_out").innerHTML='<p>'+esc(r.resumo)+'</p><div class="cost" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr))">'+arr(r.meses).map(m=>'<div style="background:'+(cor[m.nivel]||"var(--bg)")+';color:var(--ink)"><b>'+esc(m.mes)+'</b>'+esc(m.nivel)+'<br><span class="mut">'+esc(m.nota)+'</span></div>').join("")+'</div>'+LISTA("Melhores meses para gastar menos",r.melhores_meses)};
+$("#c_go").onclick=async()=>{const v=i=>$("#"+i).value.trim();const ds=[v("c_1"),v("c_2"),v("c_3")].filter(Boolean);if(ds.length<2)return toast("Informe pelo menos 2 destinos.");
+  const p=`Você é especialista em viagem econômica. Responda SOMENTE com JSON válido, sem markdown.
+Compare estes destinos: ${ds.join("; ")}. Saída de ${v("c_saida")||"cidade não informada"}; ${v("c_dias")} dias; viajantes: ${v("c_pess")||"2 adultos"}. Valores em reais para o grupo todo, estimativas gerais, sem prometer preços. nota_custo_beneficio de 0 a 10, considerando custo e qualidade da viagem.
+Formato: {"destinos":[{"destino":"","custo_total_brl":0,"custo_por_dia_brl":0,"nota_custo_beneficio":0,"passagens":0,"hospedagem":0,"alimentacao_passeios":0,"melhor_epoca_barata":"","pros":[""],"contras":[""]}],"recomendacao":""}`;
+  const r=await ask(p,$("#c_out"),$("#c_go"));if(!r)return;const D=arr(r.destinos);
+  const minC=Math.min(...D.map(d=>+d.custo_total_brl||Infinity)),maxN=Math.max(...D.map(d=>+d.nota_custo_beneficio||0));
+  $("#c_out").innerHTML='<div class="grid">'+D.map(d=>'<div class="card"><h3>'+esc(d.destino)+'</h3>'+(+d.custo_total_brl===minC?'<span class="tag" style="margin:0 4px 0 0">mais barato</span>':'')+(+d.nota_custo_beneficio===maxN?'<span class="tag" style="margin:0">melhor custo-benefício</span>':'')+'<div class="cost"><div>Total<b>'+brl(d.custo_total_brl)+'</b></div><div>Por dia<b>'+brl(d.custo_por_dia_brl)+'</b></div><div>Nota<b>'+esc(d.nota_custo_beneficio)+'/10</b></div></div><div class="mut">Passagens '+brl(d.passagens)+' · Hospedagem '+brl(d.hospedagem)+' · Alimentação e passeios '+brl(d.alimentacao_passeios)+'</div>'+(d.melhor_epoca_barata?'<h4>Época mais barata</h4><p>'+esc(d.melhor_epoca_barata)+'</p>':'')+LISTA("Vantagens",d.pros)+LISTA("Pontos de atenção",d.contras)+'</div>').join("")+'</div>'+(r.recomendacao?'<div class="card"><h4>Recomendação</h4><p>'+esc(r.recomendacao)+'</p></div>':"")};
+function renderGastos(){
+  const sel=$("#g_pag"),cur=sel.value;sel.innerHTML=pessoas.map(n=>'<option>'+esc(n)+'</option>').join("");if(pessoas.includes(cur))sel.value=cur;
+  const dv=$("#g_div"),key=pessoas.join("|");if(dv.dataset.k!==key){dv.dataset.k=key;dv.innerHTML=pessoas.length?'<span class="mut">Dividir entre:</span> '+pessoas.map(n=>'<label style="display:inline-flex;gap:4px;align-items:center;margin-right:10px;color:var(--ink)"><input type="checkbox" style="width:auto;margin:0" class="g_c" value="'+esc(n)+'" checked>'+esc(n)+'</label>').join(""):'<span class="mut">Cadastre as pessoas acima.</span>'}
+  if(!$("#g_pess").value&&pessoas.length&&document.activeElement.id!=="g_pess")$("#g_pess").value=pessoas.join(", ");
+  const saldo={};pessoas.forEach(n=>saldo[n]=0);const G=gastos.slice().sort((a,b)=>b.ts-a.ts);
+  G.forEach(g=>{const dd=arr(g.dividir).length?arr(g.dividir):pessoas,s=g.valor/Math.max(1,dd.length);saldo[g.pagador]=(saldo[g.pagador]||0)+g.valor;dd.forEach(n=>saldo[n]=(saldo[n]||0)-s)});
+  const cred=[],dev=[];Object.keys(saldo).forEach(n=>{const v=Math.round(saldo[n]*100)/100;if(v>0.5)cred.push([n,v]);else if(v<-0.5)dev.push([n,-v])});
+  const acc=[];let i=0,j=0;while(i<dev.length&&j<cred.length){const m=Math.min(dev[i][1],cred[j][1]);acc.push(dev[i][0]+" paga "+brl(m)+" a "+cred[j][0]);dev[i][1]-=m;cred[j][1]-=m;if(dev[i][1]<.5)i++;if(cred[j][1]<.5)j++}
+  const tot=G.reduce((s,g)=>s+g.valor,0);
+  $("#g_res").innerHTML='<h3>Quem deve a quem</h3><p class="mut">Total gasto: <b>'+brl(tot)+'</b></p>'+(acc.length?'<ul>'+acc.map(x=>'<li>'+esc(x)+'</li>').join("")+'</ul>':'<p class="mut">Tudo acertado por enquanto.</p>')+Object.keys(saldo).map(n=>'<div class="mut">'+esc(n)+': '+(saldo[n]>=0?"tem a receber ":"deve ")+brl(Math.abs(saldo[n]))+'</div>').join("");
+  $("#g_list").innerHTML=G.length?G.map(g=>'<div class="row"><div><b>'+esc(g.desc)+'</b> · '+brl(g.valor)+'<div class="mut">Pago por '+esc(g.pagador)+' · dividido entre '+esc(arr(g.dividir).join(", ")||"todos")+'</div></div><button class="x" data-gd="'+esc(g.id)+'" aria-label="Apagar">×</button></div>').join(""):'<p class="mut">Nenhum gasto registrado.</p>'}
+$("#g_save").onclick=()=>{const nomes=$("#g_pess").value.split(",").map(x=>x.trim()).filter(Boolean);if(nomes.length<2)return toast("Informe pelo menos 2 pessoas.");
+  if(db)db.doc("meta/pessoas").set({nomes:nomes}).catch(()=>toast("Sem permissão para editar."));else{pessoas=nomes;renderGastos()}};
+$("#g_add").onclick=()=>{const val=+$("#g_val").value,pag=$("#g_pag").value,desc=$("#g_desc").value.trim(),dv=[...document.querySelectorAll(".g_c:checked")].map(x=>x.value);
+  if(!desc||!(val>0)||!pag||!dv.length)return toast("Preencha descrição, valor, quem pagou e com quem divide.");
+  cadd("gastos",{desc:desc,valor:val,pagador:pag,dividir:dv});$("#g_desc").value="";$("#g_val").value=""};
+function renderChecks(){const L=checks.slice().sort((a,b)=>a.ts-b.ts),el=$("#k_list");if(!L.length){el.innerHTML='<p class="mut">Nada ainda. Gere um checklist ou adicione itens.</p>';return}
+  const ok=L.filter(i=>i.feito).length,cats=[...new Set(L.map(i=>i.cat||"Outros"))];
+  el.innerHTML='<p class="mut">'+ok+' de '+L.length+' itens prontos</p>'+cats.map(c=>'<h4>'+esc(c)+'</h4>'+L.filter(i=>(i.cat||"Outros")===c).map(i=>'<div class="row" style="padding:5px 0"><label style="display:flex;gap:8px;align-items:center;color:var(--ink);font-size:15px"><input type="checkbox" style="width:auto;margin:0" data-ck="'+esc(i.id)+'"'+(i.feito?' checked':'')+'><span'+(i.feito?' style="text-decoration:line-through;color:var(--mut)"':'')+'>'+esc(i.texto)+'</span></label><button class="x" data-kd="'+esc(i.id)+'" aria-label="Apagar">×</button></div>').join("")).join("")}
+$("#k_add").onclick=()=>{const t=$("#k_novo").value.trim();if(!t)return;cadd("checklist",{cat:"Extras",texto:t,feito:false});$("#k_novo").value=""};
+$("#k_go").onclick=async()=>{const v=i=>$("#"+i).value.trim();if(!v("k_dest"))return toast("Informe o destino.");
+  const p=`Você é planejador de viagens. Responda SOMENTE com JSON válido, sem markdown.
+Gere um checklist de viagem para ${v("k_dest")} (${$("#k_tipo").value}), época ${v("k_epoca")||"não informada"}, crianças com idades: ${v("k_cri")||"nenhuma"}. Até 30 itens curtos e objetivos nas categorias Documentos, Bagagem, Saúde e vacinas, Criança (só se houver), Dinheiro e celular, Antes de sair. Para vacinas e exigências de entrada, escreva "conferir exigência oficial" em vez de afirmar regras exatas.
+Formato: {"itens":[{"cat":"","texto":""}]}`;
+  const r=await ask(p,$("#k_list"),$("#k_go"));if(!r)return;
+  arr(r.itens).slice(0,40).forEach((it,i)=>cadd("checklist",{cat:it.cat||"Outros",texto:String(it.texto||""),feito:false,ts:Date.now()+i}));renderChecks()};
+$("#w_last").onclick=()=>{const d=new Date(),k=(6-d.getDay()+7)%7,s=new Date(d.getTime()+k*864e5),u=new Date(s.getTime()+864e5),f=x=>x.toLocaleDateString("pt-BR");
+  $("#w_quando").value="próximo fim de semana ("+f(s)+" e "+f(u)+")";ultima=true;$("#w_go").click();ultima=false};
+function drawMap(G,r,cid){const pts=G.flatMap(g=>arr(g.itens)).filter(x=>isFinite(+x.lat)&&isFinite(+x.lng));
+  if(!pts.length){$("#mp_out").innerHTML='<p class="err">Não consegui posicionar os lugares.</p>';return}
+  const la=pts.map(x=>+x.lat),lo=pts.map(x=>+x.lng),a=Math.min(...la),b=Math.max(...la),c=Math.min(...lo),d=Math.max(...lo),W=600,H=340,P=40,
+   sx=v=>P+(d===c?.5:(v-c)/(d-c))*(W-2*P),sy=v=>H-P-(b===a?.5:(v-a)/(b-a))*(H-2*P),COR=["#0e7c86","#d9692c","#7b5ea7","#4a9d3f","#c2415d","#b8860b"],q=x=>encodeURIComponent(x.titulo+" "+cid);
+  let svg='<svg viewBox="0 0 '+W+' '+H+'" style="width:100%;background:var(--bg);border:1px solid var(--line);border-radius:12px;color:var(--ink);margin:10px 0">',list="";
+  G.forEach((g,gi)=>{const col=COR[gi%COR.length],it=arr(g.itens).filter(x=>isFinite(+x.lat)&&isFinite(+x.lng));
+   if(it.length>1)svg+='<polyline fill="none" stroke="'+col+'" stroke-width="2" stroke-dasharray="5 4" points="'+it.map(x=>sx(+x.lng)+","+sy(+x.lat)).join(" ")+'"/>';
+   it.forEach((x,n)=>{svg+='<circle cx="'+sx(+x.lng)+'" cy="'+sy(+x.lat)+'" r="10" fill="'+col+'"/><text x="'+sx(+x.lng)+'" y="'+(sy(+x.lat)+4)+'" text-anchor="middle" font-size="11" fill="#fff">'+(n+1)+'</text><text x="'+(sx(+x.lng)+13)+'" y="'+(sy(+x.lat)+4)+'" font-size="11" fill="currentColor">'+esc(String(x.titulo).slice(0,18))+'</text>'});
+   const link=it.length>1?"https://www.google.com/maps/dir/?api=1&travelmode=walking&origin="+q(it[0])+"&destination="+q(it[it.length-1])+(it.length>2?"&waypoints="+it.slice(1,-1).map(q).join("%7C"):""):(it[0]?"https://www.google.com/maps/search/?api=1&query="+q(it[0]):"");
+   list+='<h4 style="color:'+col+'">'+esc(g.nome)+'</h4><ol>'+it.map(x=>'<li>'+esc(x.titulo)+'</li>').join("")+'</ol>'+(link?'<a href="'+link+'" target="_blank" rel="noopener">Abrir trajeto no Google Maps</a>':"")});
+  $("#mp_out").innerHTML=svg+'</svg>'+list+(r.economia_deslocamento?'<h4>Economia no deslocamento</h4><p>'+esc(r.economia_deslocamento)+'</p>':"")+(r.dica?'<p class="mut">'+esc(r.dica)+'</p>':"")}
+$("#mp_go").onclick=async()=>{const L=items.filter(i=>["passeio","restaurante","hotel"].includes(i.tipo)),cid=$("#mp_cidade").value.trim();
+  if(L.length<2)return toast("Adicione pelo menos 2 lugares (passeio, restaurante ou hotel) ao roteiro.");if(!cid)return toast("Informe a cidade ou região.");
+  const p=`Você é planejador de roteiros. Responda SOMENTE com JSON válido, sem markdown.
+Cidade ou região: ${cid}. Dias disponíveis: ${$("#mp_dias").value||1}. Lugares: ${L.map(i=>i.titulo+" ["+i.tipo+"]").join("; ")}.
+Estime coordenadas aproximadas (lat e lng decimais) de cada lugar e agrupe os que ficam perto, um grupo por dia, na melhor ordem de visita para reduzir deslocamento. Se não souber onde fica um lugar, use o centro da cidade e diga isso na dica. Use exatamente os títulos informados.
+Formato: {"grupos":[{"nome":"Dia 1","itens":[{"titulo":"","lat":0,"lng":0}]}],"dica":"","economia_deslocamento":""}`;
+  const r=await ask(p,$("#mp_out"),$("#mp_go"));if(!r)return;drawMap(arr(r.grupos),r,cid)};
+function resumo(){const L=["ROTEIRO DE VIAGEM",""],ag=items.filter(i=>i.data).sort((x,y)=>x.data<y.data?-1:1);
+  if(ag.length){L.push("AGENDA");let last="";ag.forEach(i=>{if(i.data!==last){L.push(fmtD(i.data));last=i.data}L.push("- "+i.titulo+(i.valor?" ("+brl(i.valor)+")":""))});L.push("")}
+  L.push("ITENS");items.forEach(i=>L.push("- ["+(LBL[i.tipo]||i.tipo)+"] "+i.titulo+(i.valor?" - "+brl(i.valor):"")+(i.nota?" ("+i.nota+")":"")));
+  L.push("","Total estimado: "+brl(items.reduce((s,i)=>s+(+i.valor||0),0)));return L.join("\n").replace(/\u00a0/g," ")}
+$("#x_wa").onclick=()=>{if(!items.length)return toast("O roteiro está vazio.");const w=window.open("https://wa.me/?text="+encodeURIComponent(resumo()),"_blank");if(!w)toast("Não consegui abrir o WhatsApp aqui. Use Copiar texto.")};
+$("#x_copy").onclick=async()=>{if(!items.length)return toast("O roteiro está vazio.");try{await navigator.clipboard.writeText(resumo());toast("Texto copiado.")}catch(e){const t=document.createElement("textarea");t.value=resumo();document.body.appendChild(t);t.select();let ok=false;try{ok=document.execCommand("copy")}catch(x){}t.remove();toast(ok?"Texto copiado.":"Não consegui copiar neste ambiente.")}};
+$("#x_pdf").onclick=async()=>{if(!items.length)return toast("O roteiro está vazio.");
+  try{const J=window.jspdf&&window.jspdf.jsPDF;if(!J)throw 0;const d=new J();d.setFontSize(11);let y=15;
+   d.splitTextToSize(resumo(),180).forEach(l=>{if(y>280){d.addPage();y=15}d.text(l,15,y);y+=6});
+   const dl=window.claude?await claude.use("downloads"):null;if(!dl)return toast("Download indisponível aqui. Use Copiar texto.");
+   await dl.save({filename:"roteiro-de-viagem.pdf",data:d.output("blob")})}catch(e){toast("Não foi possível gerar o PDF. Use Copiar texto ou WhatsApp.")}};
+renderMons();renderGastos();renderChecks();go("home");
+init();
+</script></body></html>

@@ -1,0 +1,289 @@
+{
+  "entities": {
+    "Viagem": {
+      "title": "Viagem",
+      "description": "Representa uma viagem compartilhada entre membros.",
+      "type": "object",
+      "properties": {
+        "nome": {
+          "type": "string",
+          "description": "Nome da viagem",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "criadorUid": {
+          "type": "string",
+          "description": "UID de quem criou a viagem",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "criadorEmail": {
+          "type": "string",
+          "description": "E-mail de quem criou a viagem",
+          "minLength": 3,
+          "maxLength": 254
+        },
+        "membros": {
+          "type": "array",
+          "description": "Lista de e-mails dos membros autorizados a ler e editar a viagem"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp de criação no servidor"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp de atualização no servidor"
+        }
+      },
+      "required": ["nome", "criadorUid", "criadorEmail", "membros", "createdAt", "updatedAt"]
+    },
+    "ItemRoteiro": {
+      "title": "ItemRoteiro",
+      "description": "Item do roteiro compartilhado (passagem, hotel, restaurante, passeio, gasto, nota, destino).",
+      "type": "object",
+      "properties": {
+        "viagemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "tipo": {
+          "type": "string",
+          "enum": ["passagem", "hotel", "restaurante", "passeio", "gasto", "nota", "destino"],
+          "minLength": 1,
+          "maxLength": 20
+        },
+        "titulo": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "valor": {
+          "type": "number"
+        },
+        "nota": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "data": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "autor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 254
+        },
+        "autorUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "ts": {
+          "type": "number"
+        },
+        "votos": {
+          "type": "array",
+          "description": "Lista de e-mails ou UIDs que votaram no item"
+        },
+        "comentarios": {
+          "type": "array",
+          "description": "Lista de comentários {autor, texto, ts}"
+        },
+        "pago": {
+          "type": "boolean"
+        },
+        "prazo": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["viagemId", "tipo", "titulo", "valor", "nota", "data", "autor", "autorUid", "ts", "votos", "comentarios", "pago", "prazo", "createdAt", "updatedAt"]
+    },
+    "MonitorPreco": {
+      "title": "MonitorPreco",
+      "description": "Monitor de preço de rota ou hotel.",
+      "type": "object",
+      "properties": {
+        "viagemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "nome": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 150
+        },
+        "data": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "alvo": {
+          "type": "number"
+        },
+        "regs": {
+          "type": "array",
+          "description": "Registros de preço {valor, ts}"
+        },
+        "ts": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["viagemId", "nome", "data", "alvo", "regs", "ts", "createdAt", "updatedAt"]
+    },
+    "GastoGrupo": {
+      "title": "GastoGrupo",
+      "description": "Gasto registrado para divisão entre pessoas do grupo.",
+      "type": "object",
+      "properties": {
+        "viagemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "desc": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "valor": {
+          "type": "number"
+        },
+        "pagador": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "dividir": {
+          "type": "array",
+          "description": "Nomes das pessoas que dividem este gasto"
+        },
+        "ts": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["viagemId", "desc", "valor", "pagador", "dividir", "ts", "createdAt", "updatedAt"]
+    },
+    "ItemChecklist": {
+      "title": "ItemChecklist",
+      "description": "Item do checklist de viagem.",
+      "type": "object",
+      "properties": {
+        "viagemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "cat": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "texto": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 250
+        },
+        "feito": {
+          "type": "boolean"
+        },
+        "ts": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["viagemId", "cat", "texto", "feito", "ts", "createdAt", "updatedAt"]
+    },
+    "PessoasGrupo": {
+      "title": "PessoasGrupo",
+      "description": "Lista de nomes das pessoas do grupo para divisão de gastos.",
+      "type": "object",
+      "properties": {
+        "viagemId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "nomes": {
+          "type": "array",
+          "description": "Lista de nomes das pessoas"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["viagemId", "nomes", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/viagens/{viagemId}": {
+      "schema": { "$ref": "#/entities/Viagem" },
+      "description": "Documento principal de cada viagem com lista de membros autorizados."
+    },
+    "/viagens/{viagemId}/itens/{itemId}": {
+      "schema": { "$ref": "#/entities/ItemRoteiro" },
+      "description": "Itens e agenda do roteiro da viagem."
+    },
+    "/viagens/{viagemId}/monitores/{monitorId}": {
+      "schema": { "$ref": "#/entities/MonitorPreco" },
+      "description": "Monitores de preço da viagem."
+    },
+    "/viagens/{viagemId}/gastos/{gastoId}": {
+      "schema": { "$ref": "#/entities/GastoGrupo" },
+      "description": "Gastos registrados para divisão na viagem."
+    },
+    "/viagens/{viagemId}/checklist/{checkId}": {
+      "schema": { "$ref": "#/entities/ItemChecklist" },
+      "description": "Checklist da viagem."
+    },
+    "/viagens/{viagemId}/meta/{metaId}": {
+      "schema": { "$ref": "#/entities/PessoasGrupo" },
+      "description": "Documento pessoas com os nomes do grupo."
+    }
+  }
+}
