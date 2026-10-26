@@ -3089,21 +3089,25 @@ Pergunta do viajante: ${pergunta}`;
             Como liberar o login com Google neste endereço (
             {unauthorizedDomain || window.location.hostname})
           </h4>
-          {authErrorCode && (
-            <p className="mut" style={{ margin: '4px 0' }}>
-              Motivo informado pelo Google/Firebase: <b>{authErrorCode}</b>
-            </p>
-          )}
+          <p className="mut" style={{ margin: '4px 0' }}>
+            Projeto Firebase conectado: <b>{firebaseProjectId}</b>
+            {authErrorCode ? (
+              <>
+                {' '}
+                · Código: <b>{authErrorCode}</b>
+              </>
+            ) : null}
+          </p>
           <ol className="mut" style={{ paddingLeft: 20, marginTop: 6 }}>
             <li>
-              <b>Autorizar o domínio da Vercel:</b> Abra os{' '}
+              <b>Autorizar o domínio no projeto {firebaseProjectId}:</b> Abra os{' '}
               <a
                 href={`https://console.firebase.google.com/project/${firebaseProjectId}/authentication/settings`}
                 target="_blank"
                 rel="noopener noreferrer"
                 style={{ color: 'var(--acc)', fontWeight: 600 }}
               >
-                Domínios autorizados no Firebase
+                Domínios autorizados no Firebase ({firebaseProjectId})
               </a>
               , clique em <b>Adicionar domínio</b> e cole:{' '}
               <b>{unauthorizedDomain || window.location.hostname}</b>{' '}
@@ -3130,6 +3134,11 @@ Pergunta do viajante: ${pergunta}`;
               </a>
               , clique em <b>Google</b>, marque <b>Ativar (Enable)</b>, escolha seu e-mail de
               suporte e clique em <b>Salvar</b>.
+            </li>
+            <li style={{ marginTop: 6 }}>
+              <b>Se estiver acessando pela Vercel:</b> Lembre-se de atualizar/enviar o código novo
+              do AI Studio para o GitHub/Vercel para que a Vercel use o projeto{' '}
+              <b>{firebaseProjectId}</b>.
             </li>
           </ol>
           <p className="mut" style={{ marginTop: 6 }}>
