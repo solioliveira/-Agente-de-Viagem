@@ -138,7 +138,7 @@
     },
     "MonitorPreco": {
       "title": "MonitorPreco",
-      "description": "Monitor de preço de rota ou hotel.",
+      "description": "Monitor de preço de rota ou hotel com histórico de preços por site e datas flexíveis.",
       "type": "object",
       "properties": {
         "viagemId": {
@@ -159,9 +159,26 @@
         "alvo": {
           "type": "number"
         },
+        "saida": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "destino": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "dias": {
+          "type": "number"
+        },
+        "adultos": {
+          "type": "number"
+        },
+        "flexDias": {
+          "type": "number"
+        },
         "regs": {
           "type": "array",
-          "description": "Registros de preço {valor, ts}"
+          "description": "Registros de preço {valor, ts, site, dataRef}"
         },
         "ts": {
           "type": "number"

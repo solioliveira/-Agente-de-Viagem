@@ -91,18 +91,25 @@ service cloud.firestore {
     // Validation Blueprint: MonitorPreco
     function isValidMonitor(data, viagemId) {
       return data.keys().hasAll(['viagemId', 'nome', 'data', 'alvo', 'regs', 'ts', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['viagemId', 'nome', 'data', 'alvo', 'regs', 'ts', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['viagemId', 'nome', 'data', 'alvo', 'saida', 'destino', 'dias', 'adultos', 'flexDias', 'regs', 'ts', 'createdAt', 'updatedAt'])
         && data.viagemId is string && data.viagemId.size() >= 1 && data.viagemId.size() <= 128 && data.viagemId == viagemId
         && data.nome is string && data.nome.size() >= 1 && data.nome.size() <= 150
         && data.data is string && data.data.size() <= 20
         && data.alvo is number && data.alvo >= 0 && data.alvo <= 100000000
+        && (!('saida' in data) || (data.saida is string && data.saida.size() <= 100))
+        && (!('destino' in data) || (data.destino is string && data.destino.size() <= 100))
+        && (!('dias' in data) || (data.dias is number && data.dias >= 1 && data.dias <= 365))
+        && (!('adultos' in data) || (data.adultos is number && data.adultos >= 1 && data.adultos <= 30))
+        && (!('flexDias' in data) || (data.flexDias is number && data.flexDias >= 0 && data.flexDias <= 7))
         && data.regs is list && data.regs.size() <= 200
         && (data.regs.size() == 0 || (
           data.regs[0] is map
           && data.regs[0].keys().hasAll(['valor', 'ts'])
-          && data.regs[0].keys().hasOnly(['valor', 'ts'])
+          && data.regs[0].keys().hasOnly(['valor', 'ts', 'site', 'dataRef'])
           && data.regs[0].valor is number && data.regs[0].valor >= 0
           && data.regs[0].ts is number
+          && (!('site' in data.regs[0]) || (data.regs[0].site is string && data.regs[0].site.size() <= 80))
+          && (!('dataRef' in data.regs[0]) || (data.regs[0].dataRef is string && data.regs[0].dataRef.size() <= 20))
         ))
         && data.ts is number && data.ts >= 0
         && data.createdAt is timestamp
@@ -230,12 +237,13 @@ service cloud.firestore {
           && isValidMonitor(incoming(), viagemId)
           && incoming().viagemId == existing().viagemId
           && incoming().nome == existing().nome
-          && incoming().data == existing().data
-          && incoming().alvo == existing().alvo
           && incoming().ts == existing().ts
           && incoming().createdAt == existing().createdAt
           && incoming().updatedAt == request.time
-          && incoming().diff(existing()).affectedKeys().hasOnly(['regs', 'updatedAt'])
+          && (
+            incoming().diff(existing()).affectedKeys().hasOnly(['regs', 'updatedAt'])
+            || incoming().diff(existing()).affectedKeys().hasOnly(['regs', 'data', 'alvo', 'saida', 'destino', 'dias', 'adultos', 'flexDias', 'updatedAt'])
+          )
           && isTripMember(viagemId);
         allow delete: if isVerified() && isValidId(viagemId) && isValidId(monitorId) && isTripMember(viagemId);
       }
