@@ -953,13 +953,13 @@ export default function App() {
     setLoading(true);
     setError('');
     try {
-      const idToken = await auth.currentUser?.getIdToken();
+      let idToken = await auth.currentUser?.getIdToken();
       if (!idToken) {
         setError('Faça login com o Google para gerar sugestões.');
         return null;
       }
 
-      const res = await fetch('/api/gemini', {
+      let res = await fetch('/api/gemini', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -967,22 +967,40 @@ export default function App() {
         },
         body: JSON.stringify({ prompt }),
       });
+
+      // Mobile/tablet browsers often wake from standby with a stale cached token; force refresh once on 401
+      if (res.status === 401 && auth.currentUser) {
+        idToken = await auth.currentUser.getIdToken(true);
+        res = await fetch('/api/gemini', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({ prompt }),
+        });
+      }
+
+      const payload = await res.json().catch(() => null);
+
       if (res.status === 401) {
-        setError('Sessão inválida ou expirada. Faça login novamente.');
+        setError(payload?.error || 'Sessão inválida ou expirada. Faça login novamente.');
         return null;
       }
       if (res.status === 429) {
-        setError('Limite de 30 solicitações por hora atingido. Aguarde um pouco e tente de novo.');
+        setError(
+          payload?.error ||
+            'Limite de solicitações atingido no momento. Aguarde um pouco e tente de novo.'
+        );
         return null;
       }
-      if (!res.ok) {
-        setError('Não consegui gerar agora. Tente de novo em instantes.');
+      if (!res.ok || !payload) {
+        setError(payload?.error || 'Não consegui gerar agora. Tente de novo em instantes.');
         return null;
       }
-      const data = (await res.json()) as T;
-      return data;
+      return payload as T;
     } catch {
-      setError('Não consegui gerar agora. Tente de novo em instantes.');
+      setError('Falha de conexão ao gerar sugestões. Verifique sua internet e tente novamente.');
       return null;
     } finally {
       setLoading(false);

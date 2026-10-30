@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { GoogleGenAI, ThinkingLevel } from '@google/genai';
-import firebaseConfig from '../firebase-applet-config.json';
+
+const DEFAULT_FIREBASE_PROJECT_ID = 'agente-de-viagem-2b383';
 
 interface ModelOption {
   model: string;
@@ -8,20 +9,21 @@ interface ModelOption {
 }
 
 const INTERNAL_MODELS: ModelOption[] = [
-  { model: 'gemini-3.5-flash-lite', thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
-  { model: 'gemini-3.5-flash', thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
-  { model: 'gemini-3.6-flash', thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
   { model: 'gemini-3.8-flash', thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
-];
-
-const EXTERNAL_MODELS: ModelOption[] = [
-  { model: 'gemini-2.5-flash-lite', thinkingConfig: { thinkingBudget: 0 } },
-  { model: 'gemini-2.5-flash', thinkingConfig: { thinkingBudget: 0 } },
-  { model: 'gemini-3.1-flash-lite-preview', thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
-  { model: 'gemini-3-flash-preview', thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
+  { model: 'gemini-3.1-flash-lite' },
   { model: 'gemini-flash-latest' },
   { model: 'gemini-3.5-flash-lite', thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
   { model: 'gemini-3.5-flash', thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
+  { model: 'gemini-3.6-flash', thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
+];
+
+const EXTERNAL_MODELS: ModelOption[] = [
+  { model: 'gemini-2.5-flash', thinkingConfig: { thinkingBudget: 0 } },
+  { model: 'gemini-2.5-flash-lite', thinkingConfig: { thinkingBudget: 0 } },
+  { model: 'gemini-flash-latest' },
+  { model: 'gemini-3-flash-preview' },
+  { model: 'gemini-3.1-flash-lite-preview' },
+  { model: 'gemini-3.8-flash', thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
 ];
 
 // Cache for Google's public X.509 certificates used to verify Firebase ID tokens
@@ -79,17 +81,21 @@ async function verifyFirebaseIdToken(idToken: string): Promise<{ uid: string; em
   }
 
   const nowSec = Math.floor(Date.now() / 1000);
-  if (!payload.exp || payload.exp <= nowSec) {
+  // Allow 60 seconds of clock skew for mobile devices waking from standby
+  if (!payload.exp || payload.exp + 60 <= nowSec) {
     throw new Error('Token expired');
   }
-  if (!payload.iat || payload.iat > nowSec + 300) {
+  if (!payload.iat || payload.iat > nowSec + 600) {
     throw new Error('Invalid token issued-at time');
   }
   if (!payload.sub || typeof payload.sub !== 'string') {
     throw new Error('Invalid token subject');
   }
 
-  const expectedProjectId = process.env.FIREBASE_PROJECT_ID || firebaseConfig.projectId;
+  const expectedProjectId =
+    process.env.FIREBASE_PROJECT_ID ||
+    process.env.VITE_FIREBASE_PROJECT_ID ||
+    DEFAULT_FIREBASE_PROJECT_ID;
   if (expectedProjectId && payload.aud !== expectedProjectId) {
     throw new Error('Token audience mismatch');
   }
@@ -133,6 +139,18 @@ function checkUserRateLimit(uid: string): boolean {
   return true;
 }
 
+function repairAndParseJson(input: string) {
+  try {
+    return JSON.parse(input);
+  } catch {
+    // Remove trailing commas before } or ] and normalize unescaped control chars
+    const repaired = input
+      .replace(/,\s*([}\]])/g, '$1')
+      .replace(/[\u0000-\u0019]+/g, ' ');
+    return JSON.parse(repaired);
+  }
+}
+
 function extractJson(raw: string) {
   const cleaned = raw
     .trim()
@@ -140,12 +158,12 @@ function extractJson(raw: string) {
     .replace(/\s*```$/i, '')
     .trim();
   try {
-    return JSON.parse(cleaned);
+    return repairAndParseJson(cleaned);
   } catch {
     const firstBrace = cleaned.indexOf('{');
     const lastBrace = cleaned.lastIndexOf('}');
     if (firstBrace !== -1 && lastBrace > firstBrace) {
-      return JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
+      return repairAndParseJson(cleaned.slice(firstBrace, lastBrace + 1));
     }
     throw new Error('Invalid JSON response from model');
   }
@@ -196,11 +214,19 @@ export default async function handler(req: any, res: any) {
       return;
     }
 
-    const apiKey = process.env.GEMINI_API_KEY || process.env.VITE_GEMINI_API_KEY;
+    const apiKey = (
+      process.env.GEMINI_API_KEY ||
+      process.env.VITE_GEMINI_API_KEY ||
+      process.env.GOOGLE_API_KEY ||
+      process.env.API_KEY ||
+      ''
+    ).trim();
+
     if (!apiKey) {
       console.error('Missing GEMINI_API_KEY environment variable');
       res.status(500).json({
-        error: 'Chave GEMINI_API_KEY não configurada nas variáveis de ambiente do servidor.',
+        error:
+          'Chave GEMINI_API_KEY não encontrada no servidor. Se estiver na Vercel, confira em Settings > Environment Variables e faça um Redeploy.',
       });
       return;
     }
@@ -242,16 +268,35 @@ export default async function handler(req: any, res: any) {
         const parsed = extractJson(text);
         res.status(200).json(parsed);
         return;
-      } catch (err) {
+      } catch (err: any) {
         lastError = err;
-        console.warn(
-          `Model ${model} failed, trying next fallback...`,
-          err instanceof Error ? err.message : err
-        );
+        const msg = String(err?.message || err || '');
+        console.warn(`Model ${model} failed, trying next fallback...`, msg);
+
+        if (
+          msg.includes('API_KEY_INVALID') ||
+          msg.includes('API key not valid') ||
+          msg.includes('API_KEY_EXPIRED')
+        ) {
+          res.status(500).json({
+            error:
+              'A chave GEMINI_API_KEY configurada no servidor é inválida ou expirou. Atualize a chave nas variáveis de ambiente.',
+          });
+          return;
+        }
       }
     }
 
-    console.error('All Gemini models failed:', lastError);
+    const lastMsg = String((lastError as any)?.message || lastError || '');
+    console.error('All Gemini models failed:', lastMsg);
+
+    if (lastMsg.includes('RESOURCE_EXHAUSTED') || lastMsg.includes('429')) {
+      res.status(429).json({
+        error: 'Cota da API Gemini atingida no momento. Aguarde 1 minuto e tente novamente.',
+      });
+      return;
+    }
+
     res.status(500).json({
       error: 'Não consegui gerar agora. Tente de novo em instantes.',
     });

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
-import firebaseConfig from '../firebase-applet-config.json';
+
+const DEFAULT_FIREBASE_PROJECT_ID = 'agente-de-viagem-2b383';
 
 // Cache for Google's public X.509 certificates used to verify Firebase ID tokens
 const GOOGLE_CERTS_URL =
@@ -56,17 +57,20 @@ async function verifyFirebaseIdToken(idToken: string): Promise<{ uid: string; em
   }
 
   const nowSec = Math.floor(Date.now() / 1000);
-  if (!payload.exp || payload.exp <= nowSec) {
+  if (!payload.exp || payload.exp + 60 <= nowSec) {
     throw new Error('Token expired');
   }
-  if (!payload.iat || payload.iat > nowSec + 300) {
+  if (!payload.iat || payload.iat > nowSec + 600) {
     throw new Error('Invalid token issued-at time');
   }
   if (!payload.sub || typeof payload.sub !== 'string') {
     throw new Error('Invalid token subject');
   }
 
-  const expectedProjectId = process.env.FIREBASE_PROJECT_ID || firebaseConfig.projectId;
+  const expectedProjectId =
+    process.env.FIREBASE_PROJECT_ID ||
+    process.env.VITE_FIREBASE_PROJECT_ID ||
+    DEFAULT_FIREBASE_PROJECT_ID;
   if (expectedProjectId && payload.aud !== expectedProjectId) {
     throw new Error('Token audience mismatch');
   }
