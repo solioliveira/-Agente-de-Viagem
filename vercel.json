@@ -13,7 +13,7 @@
   "rewrites": [
     {
       "source": "/__/auth/:path*",
-      "destination": "https://gen-lang-client-0367082496.firebaseapp.com/__/auth/:path*"
+      "destination": "https://agente-de-viagem-2b383.firebaseapp.com/__/auth/:path*"
     },
     {
       "source": "/api/(.*)",

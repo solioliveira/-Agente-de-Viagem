@@ -33,6 +33,7 @@ interface BeforeInstallPromptEvent extends Event {
 type AreaKey = 'home' | 'planejar' | 'roteiro' | 'dinheiro';
 type SecKey =
   | 'home'
+  | 'jantar'
   | 'ferias'
   | 'fds'
   | 'comp'
@@ -164,6 +165,7 @@ interface FeriasSugestao {
   dicas_economia: string[];
   economia_estimada_brl: number;
   sala_vip_milhas: string;
+  dica_por_idade?: string | string[];
 }
 
 interface FdsOpcao {
@@ -175,6 +177,7 @@ interface FdsOpcao {
   hospedagem: string;
   custo_estimado_brl: number;
   dica_crianca: string;
+  dica_por_idade?: string | string[];
   dicas_economia: string[];
   clima_tipico: string;
 }
@@ -242,6 +245,23 @@ interface ChatMsg {
   conferir?: string;
 }
 
+interface JantarPlaceItem {
+  id: string;
+  nome: string;
+  endereco: string;
+  nota: number | null;
+  avaliacoes: number | null;
+  faixaPreco: string;
+  distanciaKm: number;
+  abertoAgora: boolean | null;
+  horarioInfo?: string;
+  culinaria?: string;
+  goodForChildren?: boolean | null;
+  menuForChildren?: boolean | null;
+  espacoKids?: boolean | null;
+  googleMapsUrl: string;
+}
+
 const AREAS: Record<AreaKey, { n: string; s: [SecKey, string][] }> = {
   home: { n: 'Início', s: [['home', '']] },
   planejar: {
@@ -273,6 +293,8 @@ const AREAS: Record<AreaKey, { n: string; s: [SecKey, string][] }> = {
 
 const HELP: Record<SecKey, string> = {
   home: 'Escolha sua viagem, acompanhe o resumo e veja por onde começar.',
+  jantar:
+    'Encontre restaurantes perto de você (pelo GPS ou digitando uma cidade) num raio de 1, 3, 5 ou 10 km.',
   ferias:
     'Preencha o que souber e toque em Sugerir destinos. Os campos em "Mais opções" são opcionais.',
   fds: 'Escolha com quem vai e o orçamento. Se estiver em cima da hora, use Escapada de última hora.',
@@ -434,19 +456,6 @@ const loadLocal = <T,>(key: string, fallback: T): T => {
   }
 };
 
-const DEFAULT_LOCAL_TRIP: ViagemDoc = {
-  id: 'local_default',
-  nome: 'Nossa Viagem',
-  destino: '',
-  dataInicio: '',
-  moeda: '',
-  cotacao: 0,
-  idadesCriancas: '',
-  criadorUid: 'local',
-  criadorEmail: 'você',
-  membros: ['você'],
-};
-
 export default function App() {
   const [sec, setSec] = useState<SecKey>('home');
   const [toastMsg, setToastMsg] = useState<string | null>(null);
@@ -465,18 +474,15 @@ export default function App() {
   const [isIOS, setIsIOS] = useState(false);
   const [showIOSGuide, setShowIOSGuide] = useState(false);
 
-  // Auth & Trips state
+  // Auth & Trips state (Firestore only)
   const [user, setUser] = useState<User | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [unauthorizedDomain, setUnauthorizedDomain] = useState<string | null>(null);
   const [authErrorCode, setAuthErrorCode] = useState<string | null>(null);
 
-  const [localViagens, setLocalViagens] = useState<ViagemDoc[]>(() =>
-    loadLocal<ViagemDoc[]>('av_local_viagens', [DEFAULT_LOCAL_TRIP])
-  );
   const [cloudViagens, setCloudViagens] = useState<ViagemDoc[]>([]);
   const [activeViagemId, setActiveViagemId] = useState<string>(() =>
-    loadLocal('av_active_viagem_id', DEFAULT_LOCAL_TRIP.id)
+    loadLocal('av_active_viagem_id', '')
   );
 
   const [inviteEmail, setInviteEmail] = useState('');
@@ -611,8 +617,30 @@ export default function App() {
     },
   ]);
 
-  const viagens = user ? cloudViagens : localViagens;
+  // Jantar Hoje State
+  const [jantarCoords, setJantarCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [jantarGeoDenied, setJantarGeoDenied] = useState(false);
+  const [jantarGeoLoading, setJantarGeoLoading] = useState(false);
+  const [jantarCidade, setJantarCidade] = useState('');
+  const [jantarRaio, setJantarRaio] = useState<1 | 3 | 5 | 10>(3);
+  const [jantarLoading, setJantarLoading] = useState(false);
+  const [jantarErr, setJantarErr] = useState('');
+  const [jantarPlaces, setJantarPlaces] = useState<JantarPlaceItem[]>([]);
+  const [jantarSource, setJantarSource] = useState<'google_places' | 'openstreetmap' | null>(null);
+  const [jantarLocLabel, setJantarLocLabel] = useState('');
+  const [jantarHasSearched, setJantarHasSearched] = useState(false);
+  const [jantarFiltroCriancas, setJantarFiltroCriancas] = useState(false);
+  const [jantarFiltroCardapioKids, setJantarFiltroCardapioKids] = useState(false);
+
+  const viagens = cloudViagens;
   const activeViagem = viagens.find((v) => v.id === activeViagemId) || viagens[0] || null;
+  const idadesCriancasAtivas = (
+    activeViagem?.idadesCriancas ||
+    fCriancas ||
+    wCriancas ||
+    ''
+  ).trim();
+  const modoCriancasAtivo = Boolean(idadesCriancasAtivas);
 
   const toast = (m: string) => {
     setToastMsg(m);
@@ -682,68 +710,28 @@ export default function App() {
     }
   };
 
-  // Persist activeViagemId and localViagens
+  // Persist activeViagemId
   useEffect(() => {
     try {
       if (activeViagemId) {
         localStorage.setItem('av_active_viagem_id', JSON.stringify(activeViagemId));
       }
-      if (!user) {
-        localStorage.setItem('av_local_viagens', JSON.stringify(localViagens));
-      }
     } catch {
       // ignore
     }
-  }, [activeViagemId, localViagens, user]);
+  }, [activeViagemId]);
 
-  // Load local per-trip data when not logged in (or as offline cache)
+  // Sync existing idadesCriancas field across Férias, Fim de semana and Checklist forms when trip changes
   useEffect(() => {
-    if (user) return;
-    const tid = activeViagem?.id || 'local_default';
-    const loadedItems = loadLocal<RoteiroItem[]>(
-      `av_items_${tid}`,
-      tid === 'local_default' ? loadLocal('av_items', []) : []
-    );
-    const loadedMons = loadLocal<MonitorItem[]>(
-      `av_mons_${tid}`,
-      tid === 'local_default' ? loadLocal('av_mons', []) : []
-    );
-    const loadedGastos = loadLocal<GastoItem[]>(
-      `av_gastos_${tid}`,
-      tid === 'local_default' ? loadLocal('av_gastos', []) : []
-    );
-    const loadedChecks = loadLocal<CheckItem[]>(
-      `av_checks_${tid}`,
-      tid === 'local_default' ? loadLocal('av_checks', []) : []
-    );
-    const loadedPessoas = loadLocal<string[]>(
-      `av_pessoas_${tid}`,
-      tid === 'local_default' ? loadLocal('av_pessoas', []) : []
-    );
-
-    setItems(loadedItems);
-    setMons(loadedMons);
-    setGastos(loadedGastos);
-    setChecks(loadedChecks);
-    setPessoas(loadedPessoas);
-    setGPessInput(loadedPessoas.join(', '));
-    setGPag(loadedPessoas[0] || '');
-    setGDivSelected(loadedPessoas);
-  }, [user, activeViagem?.id]);
-
-  // Save per-trip data to localStorage for offline consultation
-  useEffect(() => {
-    const tid = activeViagem?.id || 'local_default';
-    try {
-      localStorage.setItem(`av_items_${tid}`, JSON.stringify(items));
-      localStorage.setItem(`av_mons_${tid}`, JSON.stringify(mons));
-      localStorage.setItem(`av_gastos_${tid}`, JSON.stringify(gastos));
-      localStorage.setItem(`av_checks_${tid}`, JSON.stringify(checks));
-      localStorage.setItem(`av_pessoas_${tid}`, JSON.stringify(pessoas));
-    } catch {
-      // ignore
+    if (!activeViagem) return;
+    const savedIdades = (activeViagem.idadesCriancas || '').trim();
+    setFCriancas(savedIdades);
+    setWCriancas(savedIdades);
+    setKCri(savedIdades);
+    if (savedIdades) {
+      setWPerfil('família com criança');
     }
-  }, [activeViagem?.id, items, mons, gastos, checks, pessoas]);
+  }, [activeViagem?.id, activeViagem?.idadesCriancas]);
 
   // Listen to Auth State
   useEffect(() => {
@@ -761,6 +749,13 @@ export default function App() {
       if (u) {
         setUnauthorizedDomain(null);
         setAuthErrorCode(null);
+      } else {
+        setCloudViagens([]);
+        setItems([]);
+        setMons([]);
+        setGastos([]);
+        setChecks([]);
+        setPessoas([]);
       }
     });
     return () => unsub();
@@ -822,7 +817,7 @@ export default function App() {
 
   // Listen to subcollections of activeViagem
   useEffect(() => {
-    if (!authReady || !user || !activeViagem || activeViagem.id === 'local_default') return;
+    if (!authReady || !user || !activeViagem) return;
     const vid = activeViagem.id;
 
     const itensPath = `viagens/${vid}/itens`;
@@ -949,7 +944,7 @@ export default function App() {
     }
   };
 
-  // Call Server-Side Gemini API
+  // Call Server-Side Gemini API with Firebase ID Token in Authorization header
   async function askGemini<T>(
     prompt: string,
     setLoading: (b: boolean) => void,
@@ -958,11 +953,28 @@ export default function App() {
     setLoading(true);
     setError('');
     try {
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) {
+        setError('Faça login com o Google para gerar sugestões.');
+        return null;
+      }
+
       const res = await fetch('/api/gemini', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
         body: JSON.stringify({ prompt }),
       });
+      if (res.status === 401) {
+        setError('Sessão inválida ou expirada. Faça login novamente.');
+        return null;
+      }
+      if (res.status === 429) {
+        setError('Limite de 30 solicitações por hora atingido. Aguarde um pouco e tente de novo.');
+        return null;
+      }
       if (!res.ok) {
         setError('Não consegui gerar agora. Tente de novo em instantes.');
         return null;
@@ -977,62 +989,41 @@ export default function App() {
     }
   }
 
-  // Trip Management (#1 VÁRIAS VIAGENS)
+  // Trip Management (#1 VÁRIAS VIAGENS — Firestore only)
   const handleCreateTrip = async () => {
+    if (!user || !user.email) return;
     const nome = clampStr(newTripName, 100);
     const destino = clampStr(newTripDestino, 100);
     const dataInicio = clampStr(newTripData, 20);
     if (!nome) return toast('Dê um nome para a viagem.');
 
-    if (user && user.email) {
-      try {
-        const ref = await addDoc(collection(db, 'viagens'), {
-          nome,
-          destino,
-          dataInicio,
-          moeda: '',
-          cotacao: 0,
-          idadesCriancas: '',
-          criadorUid: user.uid,
-          criadorEmail: user.email,
-          membros: [user.email],
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-        setActiveViagemId(ref.id);
-        setNewTripName('');
-        setNewTripDestino('');
-        setNewTripData('');
-        setShowNewTrip(false);
-        toast('Nova viagem criada!');
-      } catch (e) {
-        handleFirestoreError(e, OperationType.CREATE, 'viagens');
-      }
-    } else {
-      const newDoc: ViagemDoc = {
-        id: 'local_' + Date.now(),
+    try {
+      const ref = await addDoc(collection(db, 'viagens'), {
         nome,
         destino,
         dataInicio,
         moeda: '',
         cotacao: 0,
         idadesCriancas: '',
-        criadorUid: 'local',
-        criadorEmail: 'você',
-        membros: ['você'],
-      };
-      setLocalViagens((prev) => [...prev, newDoc]);
-      setActiveViagemId(newDoc.id);
+        criadorUid: user.uid,
+        criadorEmail: user.email,
+        membros: [user.email],
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      setActiveViagemId(ref.id);
       setNewTripName('');
       setNewTripDestino('');
       setNewTripData('');
       setShowNewTrip(false);
-      toast('Nova viagem criada neste aparelho!');
+      toast('Nova viagem criada!');
+    } catch (e) {
+      handleFirestoreError(e, OperationType.CREATE, 'viagens');
     }
   };
 
   const updateTripMeta = async (patch: Partial<ViagemDoc>) => {
-    if (!activeViagem) return;
+    if (!user || !activeViagem) return;
     const cleanPatch: Record<string, unknown> = {};
     if (patch.destino !== undefined) cleanPatch.destino = clampStr(patch.destino, 100);
     if (patch.dataInicio !== undefined) cleanPatch.dataInicio = clampStr(patch.dataInicio, 20);
@@ -1044,27 +1035,18 @@ export default function App() {
       cleanPatch.idadesCriancas = clampStr(patch.idadesCriancas, 50);
     }
 
-    if (user && activeViagem.id !== 'local_default' && !activeViagem.id.startsWith('local_')) {
-      try {
-        await updateDoc(doc(db, 'viagens', activeViagem.id), {
-          ...cleanPatch,
-          updatedAt: serverTimestamp(),
-        });
-      } catch (e) {
-        handleFirestoreError(e, OperationType.UPDATE, `viagens/${activeViagem.id}`);
-      }
-    } else {
-      setLocalViagens((prev) =>
-        prev.map((v) => (v.id === activeViagem.id ? { ...v, ...cleanPatch } : v))
-      );
+    try {
+      await updateDoc(doc(db, 'viagens', activeViagem.id), {
+        ...cleanPatch,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.UPDATE, `viagens/${activeViagem.id}`);
     }
   };
 
   const handleInviteMember = async () => {
-    if (!activeViagem) return;
-    if (!user) {
-      return toast('Entre com o Google para convidar outra pessoa por e-mail.');
-    }
+    if (!activeViagem || !user) return;
     if (activeViagem.criadorUid !== user.uid) {
       return toast('Apenas quem criou a viagem pode convidar membros.');
     }
@@ -1107,7 +1089,7 @@ export default function App() {
     }
   };
 
-  // CRUD Helpers for Roteiro Items
+  // CRUD Helpers for Roteiro Items (Firestore only)
   const addItem = async (partial: {
     tipo: ItemTipo;
     titulo: string;
@@ -1115,108 +1097,69 @@ export default function App() {
     nota?: string;
     data?: string;
   }) => {
+    if (!user || !user.email || !activeViagem) return;
     const ts = Date.now();
     const cleanTitulo = clampStr(partial.titulo, 200) || 'Item';
     const cleanNota = clampStr(partial.nota || '', 2000);
     const cleanData = clampStr(partial.data || '', 20);
     const cleanValor = Math.max(0, Math.min(100000000, Number(partial.valor) || 0));
 
-    if (
-      user &&
-      user.email &&
-      activeViagem &&
-      activeViagem.id !== 'local_default' &&
-      !activeViagem.id.startsWith('local_')
-    ) {
-      const vid = activeViagem.id;
-      const path = `viagens/${vid}/itens`;
-      try {
-        await addDoc(collection(db, 'viagens', vid, 'itens'), {
-          viagemId: vid,
-          tipo: partial.tipo,
-          titulo: cleanTitulo,
-          valor: cleanValor,
-          nota: cleanNota,
-          data: cleanData,
-          autor: user.email,
-          autorUid: user.uid,
-          ts,
-          votos: [],
-          comentarios: [],
-          pago: false,
-          prazo: '',
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      } catch (e) {
-        toast('Sem permissão para editar este roteiro.');
-        handleFirestoreError(e, OperationType.CREATE, path);
-      }
-    } else {
-      const localItem: RoteiroItem = {
-        id: 'l' + ts + Math.random(),
+    const vid = activeViagem.id;
+    const path = `viagens/${vid}/itens`;
+    try {
+      await addDoc(collection(db, 'viagens', vid, 'itens'), {
+        viagemId: vid,
         tipo: partial.tipo,
         titulo: cleanTitulo,
         valor: cleanValor,
         nota: cleanNota,
         data: cleanData,
-        autor: 'você',
-        autorUid: 'local',
+        autor: user.email,
+        autorUid: user.uid,
         ts,
         votos: [],
         comentarios: [],
         pago: false,
         prazo: '',
-      };
-      setItems((prev) => [localItem, ...prev]);
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } catch (e) {
+      toast('Sem permissão para editar este roteiro.');
+      handleFirestoreError(e, OperationType.CREATE, path);
     }
   };
 
   const delItem = async (id: string) => {
-    if (
-      user &&
-      activeViagem &&
-      activeViagem.id !== 'local_default' &&
-      !activeViagem.id.startsWith('local_')
-    ) {
-      const vid = activeViagem.id;
-      const path = `viagens/${vid}/itens/${id}`;
-      try {
-        await deleteDoc(doc(db, 'viagens', vid, 'itens', id));
-      } catch (e) {
-        toast('Sem permissão para apagar.');
-        handleFirestoreError(e, OperationType.DELETE, path);
-      }
-    } else {
-      setItems((prev) => prev.filter((i) => i.id !== id));
+    if (!user || !activeViagem) return;
+    const vid = activeViagem.id;
+    const path = `viagens/${vid}/itens/${id}`;
+    try {
+      await deleteDoc(doc(db, 'viagens', vid, 'itens', id));
+    } catch (e) {
+      toast('Sem permissão para apagar.');
+      handleFirestoreError(e, OperationType.DELETE, path);
     }
   };
 
   const mutateItem = async (id: string, patch: Partial<RoteiroItem>) => {
-    if (
-      user &&
-      activeViagem &&
-      activeViagem.id !== 'local_default' &&
-      !activeViagem.id.startsWith('local_')
-    ) {
-      const vid = activeViagem.id;
-      const path = `viagens/${vid}/itens/${id}`;
-      try {
-        await updateDoc(doc(db, 'viagens', vid, 'itens', id), {
-          ...patch,
-          updatedAt: serverTimestamp(),
-        });
-      } catch (e) {
-        toast('Sem permissão para editar.');
-        handleFirestoreError(e, OperationType.UPDATE, path);
-      }
-    } else {
-      setItems((prev) => prev.map((it) => (it.id === id ? { ...it, ...patch } : it)));
+    if (!user || !activeViagem) return;
+    const vid = activeViagem.id;
+    const path = `viagens/${vid}/itens/${id}`;
+    try {
+      await updateDoc(doc(db, 'viagens', vid, 'itens', id), {
+        ...patch,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (e) {
+      toast('Sem permissão para editar.');
+      handleFirestoreError(e, OperationType.UPDATE, path);
     }
   };
 
   const handleVote = (item: RoteiroItem) => {
-    const meId = user?.email || 'local';
+    if (!user?.email) return;
+    const meId = user.email;
     const v = arr<string>(item.votos);
     const nextVotos = v.includes(meId)
       ? v.filter((x) => x !== meId)
@@ -1225,9 +1168,10 @@ export default function App() {
   };
 
   const handleComment = (item: RoteiroItem) => {
+    if (!user?.email) return;
     const text = clampStr(commentInputs[item.id] || '', 500);
     if (!text) return;
-    const meId = user?.email || 'Você';
+    const meId = user.email;
     const nextComments = arr<ComentarioItem>(item.comentarios)
       .concat({ autor: meId, texto: text, ts: Date.now() })
       .slice(0, 100);
@@ -1238,13 +1182,29 @@ export default function App() {
 
   // Férias Handler
   const handleSuggestFerias = async () => {
-    if (fCriancas.trim()) {
+    const idadesInformadas = fCriancas.trim() || activeViagem?.idadesCriancas?.trim() || '';
+    if (fCriancas.trim() !== (activeViagem?.idadesCriancas || '').trim()) {
       updateTripMeta({ idadesCriancas: fCriancas.trim() });
     }
+    const listaIdades = idadesInformadas
+      .split(/[,;e\s]+/)
+      .map((x) => x.trim())
+      .filter(Boolean);
+    const blocoCriancasPrompt =
+      listaIdades.length > 0
+        ? `\nModo "Viajando com crianças" ATIVO — há ${listaIdades.length} criança(s) com a(s) seguinte(s) idade(s): ${listaIdades
+            .map((id) => `${id} ano(s)`)
+            .join(', ')}. Peça e priorize atividades, passeios e hospedagens adequadas especificamente para essas idades (${listaIdades.join(
+            ', '
+          )} anos), e preencha obrigatoriamente o campo "dica_por_idade" explicando o que cada faixa de idade (${listaIdades.join(
+            ', '
+          )} anos) vai aproveitar melhor no destino e na hospedagem.`
+        : '';
+
     const p = `Você é um agente de viagens brasileiro experiente. Responda SOMENTE com JSON válido, sem markdown.
-Perfil: saída de ${fSaida.trim() || 'cidade não informada'}; período ${fQuando.trim() || activeViagem?.dataInicio || 'flexível'}; ${fDias} dias; ${fAdultos} adulto(s); crianças com idades: ${fCriancas.trim() || activeViagem?.idadesCriancas || 'nenhuma'}; tipo: ${fTipo}; orçamento total R$ ${fOrc.trim() || 'não informado'}; milhas: ${fMilhas.trim() || '0'}; preferências: ${fEstilo.trim() || 'nenhuma'}.
+Perfil: saída de ${fSaida.trim() || 'cidade não informada'}; período ${fQuando.trim() || activeViagem?.dataInicio || 'flexível'}; ${fDias} dias; ${fAdultos} adulto(s); crianças com idades: ${idadesInformadas || 'nenhuma'}; tipo: ${fTipo}; orçamento total R$ ${fOrc.trim() || 'não informado'}; milhas: ${fMilhas.trim() || '0'}; preferências: ${fEstilo.trim() || 'nenhuma'}.${blocoCriancasPrompt}
 Foco: ${fFoco}. Se o foco for econômico, priorize destinos e épocas com melhor custo-benefício (baixa temporada, datas flexíveis, aeroportos alternativos, hospedagem em apartamento ou pousada, bagagem e transfers) e explique como economizar sem estragar a viagem. Sugira 3 destinos adequados à época e à família. Todos os valores em reais (números), estimativas realistas e arredondadas para o total do grupo; não invente preços exatos nem prometa tarifas.
-Formato: {"sugestoes":[{"destino":"","pais":"","tipo":"nacional|internacional","porque":"","custos":{"passagens":0,"hospedagem":0,"alimentacao":0,"passeios":0,"transporte_local":0,"seguro_viagem":0,"total":0},"hospedagem":[{"nome":"","tipo":"hotel|resort|pousada","faixa_diaria_brl":0}],"passagem":{"onde_comprar":"","milhas_ou_dinheiro":""},"pagar_antes":"","reserva_destino_brl":0,"roteiro":["Dia 1: ..."],"restaurantes":[""],"passeios":[""],"dicas_economia":[""],"economia_estimada_brl":0,"sala_vip_milhas":""}]}
+Formato: {"sugestoes":[{"destino":"","pais":"","tipo":"nacional|internacional","porque":"","custos":{"passagens":0,"hospedagem":0,"alimentacao":0,"passeios":0,"transporte_local":0,"seguro_viagem":0,"total":0},"hospedagem":[{"nome":"","tipo":"hotel|resort|pousada","faixa_diaria_brl":0}],"passagem":{"onde_comprar":"","milhas_ou_dinheiro":""},"pagar_antes":"","reserva_destino_brl":0,"roteiro":["Dia 1: ..."],"restaurantes":[""],"passeios":[""],"dicas_economia":[""],"economia_estimada_brl":0,"sala_vip_milhas":"","dica_por_idade":""}]}
 Em "milhas_ou_dinheiro" diga quando vale usar milhas considerando o saldo informado. Em "pagar_antes" diga o que convém quitar antecipadamente e o que guardar para gastar no destino. Roteiro resumido (até 6 itens). Em "dicas_economia" liste 3 a 5 ações concretas; em "economia_estimada_brl" o quanto isso pode reduzir o total; em "sala_vip_milhas" dê dica de milhas e de como acessar sala VIP nos aeroportos dessa viagem, sem afirmar regras exatas de cartões ou programas.`;
 
     const r = await askGemini<{ sugestoes?: FeriasSugestao[] }>(p, setFLoading, setFErr);
@@ -1292,13 +1252,28 @@ Em "milhas_ou_dinheiro" diga quando vale usar milhas considerando o saldo inform
 
   // Fim de semana Handler
   const handleSuggestFds = async (isLastMinute = false, overrideQuando?: string) => {
-    if (wCriancas.trim()) {
+    const idadesInformadas = wCriancas.trim() || activeViagem?.idadesCriancas?.trim() || '';
+    if (wCriancas.trim() !== (activeViagem?.idadesCriancas || '').trim()) {
       updateTripMeta({ idadesCriancas: wCriancas.trim() });
     }
+    const listaIdades = idadesInformadas
+      .split(/[,;e\s]+/)
+      .map((x) => x.trim())
+      .filter(Boolean);
+    const perfilEfetivo = listaIdades.length > 0 ? 'família com criança' : wPerfil;
+    const blocoCriancasPrompt =
+      listaIdades.length > 0
+        ? ` Modo "Viajando com crianças" ATIVO — crianças com idades de: ${listaIdades
+            .map((id) => `${id} ano(s)`)
+            .join(', ')}. Inclua atividades, passeios e hospedagens adequadas especificamente para essas idades (${listaIdades.join(
+            ', '
+          )} anos) e preencha obrigatoriamente o campo "dica_por_idade" com orientações específicas para cada idade cadastrada.`
+        : '';
+
     const epocaStr = overrideQuando ?? wQuando.trim() ?? 'este fim de semana';
     const p = `Você é um agente de viagens brasileiro. Responda SOMENTE com JSON válido, sem markdown.
-Sugira 4 escapadas de fim de semana saindo de ${wSaida.trim() || 'cidade não informada'}, para ${wPerfil}${wCriancas.trim() ? ' (crianças: ' + wCriancas.trim() + ' anos)' : ''}, ${wRaio}, orçamento ~R$ ${wOrc.trim() || 'não informado'}, época: ${epocaStr || 'este fim de semana'}. ${isLastMinute ? 'Escapada de última hora para o próximo fim de semana: priorize opções fáceis de reservar em cima da hora e informe o clima típico da época (você não tem a previsão real: diga para conferir). ' : ''}Foco: ${wFoco}; se for econômico, priorize opções baratas e dê dicas de como economizar. Inclua interior e opções perto. Valores em reais, estimativas gerais sem prometer preços exatos.
-Formato: {"opcoes":[{"destino":"","distancia":"","porque":"","roteiro":["Sábado: ...","Domingo: ..."],"restaurantes":[""],"hospedagem":"","custo_estimado_brl":0,"dica_crianca":"","dicas_economia":[""],"clima_tipico":""}]}`;
+Sugira 4 escapadas de fim de semana saindo de ${wSaida.trim() || 'cidade não informada'}, para ${perfilEfetivo}${idadesInformadas ? ' (crianças: ' + idadesInformadas + ' anos)' : ''}, ${wRaio}, orçamento ~R$ ${wOrc.trim() || 'não informado'}, época: ${epocaStr || 'este fim de semana'}.${blocoCriancasPrompt} ${isLastMinute ? 'Escapada de última hora para o próximo fim de semana: priorize opções fáceis de reservar em cima da hora e informe o clima típico da época (você não tem a previsão real: diga para conferir). ' : ''}Foco: ${wFoco}; se for econômico, priorize opções baratas e dê dicas de como economizar. Inclua interior e opções perto. Valores em reais, estimativas gerais sem prometer preços exatos.
+Formato: {"opcoes":[{"destino":"","distancia":"","porque":"","roteiro":["Sábado: ...","Domingo: ..."],"restaurantes":[""],"hospedagem":"","custo_estimado_brl":0,"dica_crianca":"","dica_por_idade":"","dicas_economia":[""],"clima_tipico":""}]}`;
 
     const r = await askGemini<{ opcoes?: FdsOpcao[] }>(p, setWLoading, setWErr);
     if (r) {
@@ -1358,8 +1333,9 @@ Formato: {"resumo":"","melhores_meses":[""],"meses":[{"mes":"Janeiro","nivel":"a
     if (r) setDResult(r);
   };
 
-  // Monitor de preço & "Achar mais barato" Handlers
+  // Monitor de preço & "Achar mais barato" Handlers (Firestore only)
   const handleAddMonitor = async () => {
+    if (!user || !activeViagem) return;
     const n = clampStr(pNome, 150);
     if (!n) return toast('Dê um nome ao monitor.');
     const ts = Date.now();
@@ -1368,51 +1344,27 @@ Formato: {"resumo":"","melhores_meses":[""],"meses":[{"mes":"Janeiro","nivel":"a
     const cleanDestino = clampStr(dDest || activeViagem?.destino || n, 100);
     const cleanSaida = clampStr(dSaida || fSaida || wSaida || cSaida || '', 100);
 
-    if (
-      user &&
-      activeViagem &&
-      activeViagem.id !== 'local_default' &&
-      !activeViagem.id.startsWith('local_')
-    ) {
-      const vid = activeViagem.id;
-      const path = `viagens/${vid}/monitores`;
-      try {
-        await addDoc(collection(db, 'viagens', vid, 'monitores'), {
-          viagemId: vid,
-          nome: n,
-          data: cleanData,
-          alvo: cleanAlvo,
-          saida: cleanSaida,
-          destino: cleanDestino,
-          dias: Math.max(1, Number(dDias) || 7),
-          adultos: Math.max(1, Number(fAdultos) || 2),
-          flexDias: 0,
-          regs: [],
-          ts,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      } catch (e) {
-        toast('Sem permissão para editar.');
-        handleFirestoreError(e, OperationType.CREATE, path);
-      }
-    } else {
-      setMons((prev) => [
-        {
-          id: 'm' + ts,
-          nome: n,
-          data: cleanData,
-          alvo: cleanAlvo,
-          saida: cleanSaida,
-          destino: cleanDestino,
-          dias: Math.max(1, Number(dDias) || 7),
-          adultos: Math.max(1, Number(fAdultos) || 2),
-          flexDias: 0,
-          regs: [],
-          ts,
-        },
-        ...prev,
-      ]);
+    const vid = activeViagem.id;
+    const path = `viagens/${vid}/monitores`;
+    try {
+      await addDoc(collection(db, 'viagens', vid, 'monitores'), {
+        viagemId: vid,
+        nome: n,
+        data: cleanData,
+        alvo: cleanAlvo,
+        saida: cleanSaida,
+        destino: cleanDestino,
+        dias: Math.max(1, Number(dDias) || 7),
+        adultos: Math.max(1, Number(fAdultos) || 2),
+        flexDias: 0,
+        regs: [],
+        ts,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } catch (e) {
+      toast('Sem permissão para editar.');
+      handleFirestoreError(e, OperationType.CREATE, path);
     }
     setPNome('');
     setPData('');
@@ -1433,6 +1385,7 @@ Formato: {"resumo":"","melhores_meses":[""],"meses":[{"mes":"Janeiro","nivel":"a
     adultos?: number;
     flexDias?: number;
   }) => {
+    if (!user || !activeViagem) return;
     const val = Math.max(0, Math.min(100000000, Number(opts.valor) || 0));
     if (!(val > 0)) return toast('Informe um valor válido em R$.');
     const cleanSite = clampStr(opts.site || 'Site de busca', 80);
@@ -1449,6 +1402,8 @@ Formato: {"resumo":"","melhores_meses":[""],"meses":[{"mes":"Janeiro","nivel":"a
       mons.find((m) => m.nome.toLowerCase() === opts.monitorNome.toLowerCase()) ||
       null;
 
+    const vid = activeViagem.id;
+
     if (targetMon) {
       const nextRegs = arr<RegMonitor>(targetMon.regs).concat(newReg).slice(0, 200);
       const nextAlvo =
@@ -1459,40 +1414,18 @@ Formato: {"resumo":"","melhores_meses":[""],"meses":[{"mes":"Janeiro","nivel":"a
       const nextFlex =
         opts.flexDias !== undefined ? opts.flexDias : targetMon.flexDias ?? 0;
 
-      if (
-        user &&
-        activeViagem &&
-        activeViagem.id !== 'local_default' &&
-        !activeViagem.id.startsWith('local_')
-      ) {
-        const vid = activeViagem.id;
-        const path = `viagens/${vid}/monitores/${targetMon.id}`;
-        try {
-          await updateDoc(doc(db, 'viagens', vid, 'monitores', targetMon.id), {
-            regs: nextRegs,
-            alvo: nextAlvo,
-            data: clampStr(nextData, 20),
-            flexDias: Math.max(0, Math.min(7, Number(nextFlex) || 0)),
-            updatedAt: serverTimestamp(),
-          });
-        } catch (e) {
-          toast('Sem permissão para editar.');
-          handleFirestoreError(e, OperationType.UPDATE, path);
-        }
-      } else {
-        setMons((prev) =>
-          prev.map((x) =>
-            x.id === targetMon.id
-              ? {
-                  ...x,
-                  regs: nextRegs,
-                  alvo: nextAlvo,
-                  data: clampStr(nextData, 20),
-                  flexDias: Math.max(0, Math.min(7, Number(nextFlex) || 0)),
-                }
-              : x
-          )
-        );
+      const path = `viagens/${vid}/monitores/${targetMon.id}`;
+      try {
+        await updateDoc(doc(db, 'viagens', vid, 'monitores', targetMon.id), {
+          regs: nextRegs,
+          alvo: nextAlvo,
+          data: clampStr(nextData, 20),
+          flexDias: Math.max(0, Math.min(7, Number(nextFlex) || 0)),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (e) {
+        toast('Sem permissão para editar.');
+        handleFirestoreError(e, OperationType.UPDATE, path);
       }
       const chegou = nextAlvo > 0 && val <= nextAlvo;
       toast(
@@ -1511,51 +1444,26 @@ Formato: {"resumo":"","melhores_meses":[""],"meses":[{"mes":"Janeiro","nivel":"a
       const adultosClean = Math.max(1, Math.min(30, Number(opts.adultos) || 2));
       const flexClean = Math.max(0, Math.min(7, Number(opts.flexDias) || 0));
 
-      if (
-        user &&
-        activeViagem &&
-        activeViagem.id !== 'local_default' &&
-        !activeViagem.id.startsWith('local_')
-      ) {
-        const vid = activeViagem.id;
-        const path = `viagens/${vid}/monitores`;
-        try {
-          await addDoc(collection(db, 'viagens', vid, 'monitores'), {
-            viagemId: vid,
-            nome: nomeClean,
-            data: dataClean,
-            alvo: alvoClean,
-            saida: saidaClean,
-            destino: destinoClean,
-            dias: diasClean,
-            adultos: adultosClean,
-            flexDias: flexClean,
-            regs: [newReg],
-            ts,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
-        } catch (e) {
-          toast('Sem permissão para editar.');
-          handleFirestoreError(e, OperationType.CREATE, path);
-        }
-      } else {
-        setMons((prev) => [
-          {
-            id: 'm' + ts,
-            nome: nomeClean,
-            data: dataClean,
-            alvo: alvoClean,
-            saida: saidaClean,
-            destino: destinoClean,
-            dias: diasClean,
-            adultos: adultosClean,
-            flexDias: flexClean,
-            regs: [newReg],
-            ts,
-          },
-          ...prev,
-        ]);
+      const path = `viagens/${vid}/monitores`;
+      try {
+        await addDoc(collection(db, 'viagens', vid, 'monitores'), {
+          viagemId: vid,
+          nome: nomeClean,
+          data: dataClean,
+          alvo: alvoClean,
+          saida: saidaClean,
+          destino: destinoClean,
+          dias: diasClean,
+          adultos: adultosClean,
+          flexDias: flexClean,
+          regs: [newReg],
+          ts,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } catch (e) {
+        toast('Sem permissão para editar.');
+        handleFirestoreError(e, OperationType.CREATE, path);
       }
       const chegou = alvoClean > 0 && val <= alvoClean;
       toast(
@@ -1580,22 +1488,14 @@ Formato: {"resumo":"","melhores_meses":[""],"meses":[{"mes":"Janeiro","nivel":"a
   };
 
   const handleDelMonitor = async (id: string) => {
-    if (
-      user &&
-      activeViagem &&
-      activeViagem.id !== 'local_default' &&
-      !activeViagem.id.startsWith('local_')
-    ) {
-      const vid = activeViagem.id;
-      const path = `viagens/${vid}/monitores/${id}`;
-      try {
-        await deleteDoc(doc(db, 'viagens', vid, 'monitores', id));
-      } catch (e) {
-        toast('Sem permissão para apagar.');
-        handleFirestoreError(e, OperationType.DELETE, path);
-      }
-    } else {
-      setMons((prev) => prev.filter((m) => m.id !== id));
+    if (!user || !activeViagem) return;
+    const vid = activeViagem.id;
+    const path = `viagens/${vid}/monitores/${id}`;
+    try {
+      await deleteDoc(doc(db, 'viagens', vid, 'monitores', id));
+    } catch (e) {
+      toast('Sem permissão para apagar.');
+      handleFirestoreError(e, OperationType.DELETE, path);
     }
   };
 
@@ -2339,83 +2239,56 @@ Formato: {"grupos":[{"nome":"Dia 1","itens":[{"titulo":"","lat":0,"lng":0}]}],"d
     if (r) setMpResult(r);
   };
 
-  // Checklist Handlers
+  // Checklist Handlers (Firestore only)
   const addCheckItem = async (cat: string, texto: string, offsetTs = 0) => {
+    if (!user || !activeViagem) return;
     const ts = Date.now() + offsetTs;
     const cleanCat = clampStr(cat || 'Outros', 60);
     const cleanTexto = clampStr(texto, 250);
     if (!cleanTexto) return;
 
-    if (
-      user &&
-      activeViagem &&
-      activeViagem.id !== 'local_default' &&
-      !activeViagem.id.startsWith('local_')
-    ) {
-      const vid = activeViagem.id;
-      const path = `viagens/${vid}/checklist`;
-      try {
-        await addDoc(collection(db, 'viagens', vid, 'checklist'), {
-          viagemId: vid,
-          cat: cleanCat,
-          texto: cleanTexto,
-          feito: false,
-          ts,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      } catch (e) {
-        toast('Sem permissão para editar.');
-        handleFirestoreError(e, OperationType.CREATE, path);
-      }
-    } else {
-      setChecks((prev) => [
-        ...prev,
-        { id: 'ck' + ts + Math.random(), cat: cleanCat, texto: cleanTexto, feito: false, ts },
-      ]);
+    const vid = activeViagem.id;
+    const path = `viagens/${vid}/checklist`;
+    try {
+      await addDoc(collection(db, 'viagens', vid, 'checklist'), {
+        viagemId: vid,
+        cat: cleanCat,
+        texto: cleanTexto,
+        feito: false,
+        ts,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } catch (e) {
+      toast('Sem permissão para editar.');
+      handleFirestoreError(e, OperationType.CREATE, path);
     }
   };
 
   const toggleCheckItem = async (id: string, feito: boolean) => {
-    if (
-      user &&
-      activeViagem &&
-      activeViagem.id !== 'local_default' &&
-      !activeViagem.id.startsWith('local_')
-    ) {
-      const vid = activeViagem.id;
-      const path = `viagens/${vid}/checklist/${id}`;
-      try {
-        await updateDoc(doc(db, 'viagens', vid, 'checklist', id), {
-          feito,
-          updatedAt: serverTimestamp(),
-        });
-      } catch (e) {
-        toast('Sem permissão para editar.');
-        handleFirestoreError(e, OperationType.UPDATE, path);
-      }
-    } else {
-      setChecks((prev) => prev.map((c) => (c.id === id ? { ...c, feito } : c)));
+    if (!user || !activeViagem) return;
+    const vid = activeViagem.id;
+    const path = `viagens/${vid}/checklist/${id}`;
+    try {
+      await updateDoc(doc(db, 'viagens', vid, 'checklist', id), {
+        feito,
+        updatedAt: serverTimestamp(),
+      });
+    } catch (e) {
+      toast('Sem permissão para editar.');
+      handleFirestoreError(e, OperationType.UPDATE, path);
     }
   };
 
   const delCheckItem = async (id: string) => {
-    if (
-      user &&
-      activeViagem &&
-      activeViagem.id !== 'local_default' &&
-      !activeViagem.id.startsWith('local_')
-    ) {
-      const vid = activeViagem.id;
-      const path = `viagens/${vid}/checklist/${id}`;
-      try {
-        await deleteDoc(doc(db, 'viagens', vid, 'checklist', id));
-      } catch (e) {
-        toast('Sem permissão para apagar.');
-        handleFirestoreError(e, OperationType.DELETE, path);
-      }
-    } else {
-      setChecks((prev) => prev.filter((c) => c.id !== id));
+    if (!user || !activeViagem) return;
+    const vid = activeViagem.id;
+    const path = `viagens/${vid}/checklist/${id}`;
+    try {
+      await deleteDoc(doc(db, 'viagens', vid, 'checklist', id));
+    } catch (e) {
+      toast('Sem permissão para apagar.');
+      handleFirestoreError(e, OperationType.DELETE, path);
     }
   };
 
@@ -2442,8 +2315,9 @@ Formato: {"itens":[{"cat":"","texto":""}]}`;
     }
   };
 
-  // Dividir Gastos Handlers
+  // Dividir Gastos Handlers (Firestore only)
   const handleSavePessoas = async () => {
+    if (!user || !activeViagem) return;
     const nomes = gPessInput
       .split(',')
       .map((x) => clampStr(x, 80))
@@ -2451,44 +2325,33 @@ Formato: {"itens":[{"cat":"","texto":""}]}`;
       .slice(0, 30);
     if (nomes.length < 2) return toast('Informe pelo menos 2 pessoas.');
 
-    if (
-      user &&
-      activeViagem &&
-      activeViagem.id !== 'local_default' &&
-      !activeViagem.id.startsWith('local_')
-    ) {
-      const vid = activeViagem.id;
-      const path = `viagens/${vid}/meta/pessoas`;
-      try {
-        const ref = doc(db, 'viagens', vid, 'meta', 'pessoas');
-        const snap = await getDoc(ref);
-        if (snap.exists()) {
-          await updateDoc(ref, {
-            nomes,
-            updatedAt: serverTimestamp(),
-          });
-        } else {
-          await setDoc(ref, {
-            viagemId: vid,
-            nomes,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
-        }
-        toast('Pessoas salvas.');
-      } catch (e) {
-        toast('Sem permissão para editar.');
-        handleFirestoreError(e, OperationType.WRITE, path);
+    const vid = activeViagem.id;
+    const path = `viagens/${vid}/meta/pessoas`;
+    try {
+      const ref = doc(db, 'viagens', vid, 'meta', 'pessoas');
+      const snap = await getDoc(ref);
+      if (snap.exists()) {
+        await updateDoc(ref, {
+          nomes,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await setDoc(ref, {
+          viagemId: vid,
+          nomes,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
       }
-    } else {
-      setPessoas(nomes);
-      setGPag(nomes[0] || '');
-      setGDivSelected(nomes);
       toast('Pessoas salvas.');
+    } catch (e) {
+      toast('Sem permissão para editar.');
+      handleFirestoreError(e, OperationType.WRITE, path);
     }
   };
 
   const handleAddGasto = async () => {
+    if (!user || !activeViagem) return;
     const val = Number(gVal);
     const desc = clampStr(gDesc, 200);
     const pag = clampStr(gPag, 80);
@@ -2497,56 +2360,36 @@ Formato: {"itens":[{"cat":"","texto":""}]}`;
       return toast('Preencha descrição, valor, quem pagou e com quem divide.');
     }
     const ts = Date.now();
-    if (
-      user &&
-      activeViagem &&
-      activeViagem.id !== 'local_default' &&
-      !activeViagem.id.startsWith('local_')
-    ) {
-      const vid = activeViagem.id;
-      const path = `viagens/${vid}/gastos`;
-      try {
-        await addDoc(collection(db, 'viagens', vid, 'gastos'), {
-          viagemId: vid,
-          desc,
-          valor: val,
-          pagador: pag,
-          dividir: dv,
-          ts,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-      } catch (e) {
-        toast('Sem permissão para editar.');
-        handleFirestoreError(e, OperationType.CREATE, path);
-      }
-    } else {
-      setGastos((prev) => [
-        { id: 'g' + ts, desc, valor: val, pagador: pag, dividir: dv, ts },
-        ...prev,
-      ]);
+    const vid = activeViagem.id;
+    const path = `viagens/${vid}/gastos`;
+    try {
+      await addDoc(collection(db, 'viagens', vid, 'gastos'), {
+        viagemId: vid,
+        desc,
+        valor: val,
+        pagador: pag,
+        dividir: dv,
+        ts,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } catch (e) {
+      toast('Sem permissão para editar.');
+      handleFirestoreError(e, OperationType.CREATE, path);
     }
     setGDesc('');
     setGVal('');
   };
 
   const handleDelGasto = async (id: string) => {
-    if (
-      user &&
-      activeViagem &&
-      activeViagem.id !== 'local_default' &&
-      !activeViagem.id.startsWith('local_')
-    ) {
-      const vid = activeViagem.id;
-      const path = `viagens/${vid}/gastos/${id}`;
-      try {
-        await deleteDoc(doc(db, 'viagens', vid, 'gastos', id));
-      } catch (e) {
-        toast('Sem permissão para apagar.');
-        handleFirestoreError(e, OperationType.DELETE, path);
-      }
-    } else {
-      setGastos((prev) => prev.filter((g) => g.id !== id));
+    if (!user || !activeViagem) return;
+    const vid = activeViagem.id;
+    const path = `viagens/${vid}/gastos/${id}`;
+    try {
+      await deleteDoc(doc(db, 'viagens', vid, 'gastos', id));
+    } catch (e) {
+      toast('Sem permissão para apagar.');
+      handleFirestoreError(e, OperationType.DELETE, path);
     }
   };
 
@@ -2621,6 +2464,127 @@ Pergunta do viajante: ${pergunta}`;
           texto: 'Não consegui responder agora. Tente novamente em instantes.',
         },
       ]);
+    }
+  };
+
+  // Jantar Hoje Handlers
+  const fetchJantarRestaurants = async (opts: {
+    lat?: number;
+    lng?: number;
+    city?: string;
+    radiusKm?: 1 | 3 | 5 | 10;
+  }) => {
+    setJantarLoading(true);
+    setJantarErr('');
+    setJantarHasSearched(true);
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) {
+        setJantarErr('Faça login com o Google para buscar restaurantes.');
+        return;
+      }
+
+      const res = await fetch('/api/places', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          lat: opts.lat,
+          lng: opts.lng,
+          city: opts.city,
+          radiusKm: opts.radiusKm ?? jantarRaio,
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setJantarErr(
+          data?.error ||
+            'Não foi possível buscar os restaurantes agora. Tente novamente em instantes.'
+        );
+        setJantarPlaces([]);
+        return;
+      }
+
+      setJantarPlaces(arr<JantarPlaceItem>(data.places));
+      setJantarSource(data.source || null);
+      if (data.location?.label) {
+        setJantarLocLabel(String(data.location.label));
+      }
+      if (
+        typeof data.location?.lat === 'number' &&
+        typeof data.location?.lng === 'number' &&
+        !opts.lat
+      ) {
+        setJantarCoords({ lat: data.location.lat, lng: data.location.lng });
+      }
+    } catch {
+      setJantarErr(
+        'Erro de conexão ao consultar restaurantes. Verifique sua internet e tente novamente.'
+      );
+      setJantarPlaces([]);
+    } finally {
+      setJantarLoading(false);
+    }
+  };
+
+  const requestUserGeolocationAndSearch = (customRadius?: 1 | 3 | 5 | 10) => {
+    const rKm = customRadius ?? jantarRaio;
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      setJantarGeoDenied(true);
+      setJantarErr('Seu navegador não suporta localização automática. Digite uma cidade abaixo.');
+      return;
+    }
+
+    setJantarGeoLoading(true);
+    setJantarErr('');
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setJantarGeoLoading(false);
+        setJantarGeoDenied(false);
+        const coords = {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+        };
+        setJantarCoords(coords);
+        setJantarLocLabel('Sua localização atual (GPS)');
+        fetchJantarRestaurants({
+          lat: coords.lat,
+          lng: coords.lng,
+          radiusKm: rKm,
+        });
+      },
+      () => {
+        setJantarGeoLoading(false);
+        setJantarGeoDenied(true);
+      },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 }
+    );
+  };
+
+  const handleOpenJantar = () => {
+    go('jantar');
+    if (!jantarCoords && !jantarCidade.trim() && !jantarGeoLoading) {
+      requestUserGeolocationAndSearch(jantarRaio);
+    }
+  };
+
+  const handleSearchJantar = () => {
+    if (jantarCidade.trim()) {
+      fetchJantarRestaurants({
+        city: jantarCidade.trim(),
+        radiusKm: jantarRaio,
+      });
+    } else if (jantarCoords) {
+      fetchJantarRestaurants({
+        lat: jantarCoords.lat,
+        lng: jantarCoords.lng,
+        radiusKm: jantarRaio,
+      });
+    } else {
+      requestUserGeolocationAndSearch(jantarRaio);
     }
   };
 
@@ -2977,6 +2941,101 @@ Pergunta do viajante: ${pergunta}`;
     .filter((i) => i.data)
     .sort((x, y) => (x.data < y.data ? -1 : 1));
 
+  // 1. Loading Screen while Firebase Auth is initializing
+  if (!authReady) {
+    return (
+      <div className="wrap" style={{ textAlign: 'center', paddingTop: 80 }}>
+        <div className="card" style={{ maxWidth: 420, margin: '0 auto' }}>
+          <h1>✈️ Agente de Viagem</h1>
+          <p className="mut" style={{ marginTop: 10 }}>
+            Carregando…
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // 2. Entry Screen when not logged in (no other sections shown)
+  if (!user) {
+    return (
+      <div className="wrap" style={{ paddingTop: 48 }}>
+        <div className="card" style={{ maxWidth: 460, margin: '0 auto', textAlign: 'center' }}>
+          <h1>✈️ Agente de Viagem</h1>
+          <p className="sub" style={{ marginTop: 8 }}>
+            Planeje viagens de férias e escapadas de fim de semana gastando menos, use milhas com
+            inteligência e monte o roteiro em tempo real com quem viaja com você.
+          </p>
+          <button
+            className="btn"
+            style={{ marginTop: 14, width: '100%' }}
+            onClick={handleGoogleLoginClick}
+          >
+            Entrar com Google
+          </button>
+        </div>
+
+        {(unauthorizedDomain || authErrorCode) && (
+          <div
+            className="card"
+            style={{
+              maxWidth: 460,
+              margin: '14px auto 0',
+              borderLeft: '4px solid var(--acc2)',
+            }}
+          >
+            <h4>
+              Como liberar o login com Google neste endereço (
+              {unauthorizedDomain || window.location.hostname})
+            </h4>
+            <p className="mut" style={{ margin: '4px 0' }}>
+              Projeto Firebase conectado: <b>{firebaseProjectId}</b>
+              {authErrorCode ? (
+                <>
+                  {' '}
+                  · Código: <b>{authErrorCode}</b>
+                </>
+              ) : null}
+            </p>
+            <ol className="mut" style={{ paddingLeft: 20, marginTop: 6 }}>
+              <li>
+                <b>Autorizar o domínio no projeto {firebaseProjectId}:</b> Abra os{' '}
+                <a
+                  href={`https://console.firebase.google.com/project/${firebaseProjectId}/authentication/settings`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: 'var(--acc)', fontWeight: 600 }}
+                >
+                  Domínios autorizados no Firebase ({firebaseProjectId})
+                </a>
+                , clique em <b>Adicionar domínio</b> e cole:{' '}
+                <b>{unauthorizedDomain || window.location.hostname}</b>
+              </li>
+              <li style={{ marginTop: 6 }}>
+                <b>Verificar se o provedor Google está ativo:</b> Abra{' '}
+                <a
+                  href={`https://console.firebase.google.com/project/${firebaseProjectId}/authentication/providers`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  style={{ color: 'var(--acc)', fontWeight: 600 }}
+                >
+                  Sign-in method (Provedores) no Firebase
+                </a>
+                , clique em <b>Google</b>, marque <b>Ativar (Enable)</b>, escolha seu e-mail de
+                suporte e clique em <b>Salvar</b>.
+              </li>
+            </ol>
+          </div>
+        )}
+
+        {toastMsg && (
+          <div className="toast-box" role="status" aria-live="polite">
+            {toastMsg}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="wrap">
       {/* Header with Accessibility, PWA Install, and Google Auth */}
@@ -3031,26 +3090,15 @@ Pergunta do viajante: ${pergunta}`;
             </button>
           )}
 
-          {/* Login Google */}
-          {user ? (
-            <button
-              className="btn sec"
-              style={{ margin: 0, padding: '6px 10px' }}
-              onClick={() => logoutUser()}
-              aria-label={`Sair da conta ${user.email}`}
-            >
-              Sair ({user.email?.split('@')[0]})
-            </button>
-          ) : (
-            <button
-              className="btn sec"
-              style={{ margin: 0, padding: '6px 10px' }}
-              onClick={handleGoogleLoginClick}
-              aria-label="Entrar com conta do Google para compartilhar roteiro"
-            >
-              Entrar com Google
-            </button>
-          )}
+          {/* Sair da conta Google */}
+          <button
+            className="btn sec"
+            style={{ margin: 0, padding: '6px 10px' }}
+            onClick={() => logoutUser()}
+            aria-label={`Sair da conta ${user.email}`}
+          >
+            Sair ({user.email?.split('@')[0]})
+          </button>
         </div>
       </header>
 
@@ -3079,72 +3127,6 @@ Pergunta do viajante: ${pergunta}`;
           >
             Fechar
           </button>
-        </div>
-      )}
-
-      {/* Helper box when domain or provider needs authorization in Firebase Auth */}
-      {(unauthorizedDomain || authErrorCode) && (
-        <div className="card" style={{ borderLeft: '4px solid var(--acc2)', marginTop: 8 }}>
-          <h4>
-            Como liberar o login com Google neste endereço (
-            {unauthorizedDomain || window.location.hostname})
-          </h4>
-          <p className="mut" style={{ margin: '4px 0' }}>
-            Projeto Firebase conectado: <b>{firebaseProjectId}</b>
-            {authErrorCode ? (
-              <>
-                {' '}
-                · Código: <b>{authErrorCode}</b>
-              </>
-            ) : null}
-          </p>
-          <ol className="mut" style={{ paddingLeft: 20, marginTop: 6 }}>
-            <li>
-              <b>Autorizar o domínio no projeto {firebaseProjectId}:</b> Abra os{' '}
-              <a
-                href={`https://console.firebase.google.com/project/${firebaseProjectId}/authentication/settings`}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ color: 'var(--acc)', fontWeight: 600 }}
-              >
-                Domínios autorizados no Firebase ({firebaseProjectId})
-              </a>
-              , clique em <b>Adicionar domínio</b> e cole:{' '}
-              <b>{unauthorizedDomain || window.location.hostname}</b>{' '}
-              <button
-                className="btn sec"
-                style={{ margin: '0 0 0 6px', padding: '2px 8px', fontSize: 12 }}
-                onClick={() => {
-                  navigator.clipboard.writeText(unauthorizedDomain || window.location.hostname);
-                  toast('Domínio copiado!');
-                }}
-              >
-                Copiar
-              </button>
-            </li>
-            <li style={{ marginTop: 6 }}>
-              <b>Verificar se o provedor Google está ativo:</b> Abra{' '}
-              <a
-                href={`https://console.firebase.google.com/project/${firebaseProjectId}/authentication/providers`}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{ color: 'var(--acc)', fontWeight: 600 }}
-              >
-                Sign-in method (Provedores) no Firebase
-              </a>
-              , clique em <b>Google</b>, marque <b>Ativar (Enable)</b>, escolha seu e-mail de
-              suporte e clique em <b>Salvar</b>.
-            </li>
-            <li style={{ marginTop: 6 }}>
-              <b>Se estiver acessando pela Vercel:</b> Lembre-se de atualizar/enviar o código novo
-              do AI Studio para o GitHub/Vercel para que a Vercel use o projeto{' '}
-              <b>{firebaseProjectId}</b>.
-            </li>
-          </ol>
-          <p className="mut" style={{ marginTop: 6 }}>
-            Enquanto isso, você já pode usar todas as funções do app normalmente — seus dados ficam
-            salvos neste aparelho.
-          </p>
         </div>
       )}
 
@@ -3210,11 +3192,18 @@ Pergunta do viajante: ${pergunta}`;
               ))}
             </select>
           </div>
-          {moedaAtiva && cotacaoAtiva > 0 && (
-            <span className="tag" style={{ margin: 0 }}>
-              Câmbio: 1 {moedaAtiva} = R$ {cotacaoAtiva.toFixed(2)}
-            </span>
-          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            {modoCriancasAtivo && (
+              <span className="tag" style={{ margin: 0 }}>
+                👨‍👩‍👧‍👦 Família (crianças: {idadesCriancasAtivas} anos)
+              </span>
+            )}
+            {moedaAtiva && cotacaoAtiva > 0 && (
+              <span className="tag" style={{ margin: 0 }}>
+                Câmbio: 1 {moedaAtiva} = R$ {cotacaoAtiva.toFixed(2)}
+              </span>
+            )}
+          </div>
         </div>
       )}
 
@@ -3276,6 +3265,20 @@ Pergunta do viajante: ${pergunta}`;
                     type="date"
                     value={activeViagem?.dataInicio || ''}
                     onChange={(e) => updateTripMeta({ dataInicio: e.target.value })}
+                  />
+                </label>
+                <label className="field-label">
+                  Viajando com crianças (idades)
+                  <input
+                    value={activeViagem?.idadesCriancas || ''}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setFCriancas(val);
+                      setWCriancas(val);
+                      setKCri(val);
+                      updateTripMeta({ idadesCriancas: val });
+                    }}
+                    placeholder="Ex.: 4, 9 (vazio = sem crianças)"
                   />
                 </label>
               </div>
@@ -3384,6 +3387,9 @@ Pergunta do viajante: ${pergunta}`;
                 {activeViagem.destino ? (
                   <span className="tag">{activeViagem.destino}</span>
                 ) : null}
+                {modoCriancasAtivo && (
+                  <span className="tag">👨‍👩‍👧‍👦 Família ({idadesCriancasAtivas} anos)</span>
+                )}
               </h3>
 
               <div className="cost">
@@ -3452,7 +3458,517 @@ Pergunta do viajante: ${pergunta}`;
                 Passagens, hotéis e passeios juntos, compartilhado com quem viaja com você.
               </small>
             </button>
+            <button className="big-btn" onClick={handleOpenJantar}>
+              🍽️ Jantar hoje
+              <small>
+                Encontre restaurantes perto de você (ou em outra cidade) num raio de 1 a 10 km.
+              </small>
+            </button>
           </div>
+        </section>
+      )}
+
+      {/* JANTAR HOJE */}
+      {sec === 'jantar' && (
+        <section>
+          <div className="card">
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                flexWrap: 'wrap',
+                gap: 8,
+              }}
+            >
+              <h3 style={{ margin: 0 }}>🍽️ Jantar hoje</h3>
+              <button
+                className="btn sec"
+                style={{ margin: 0 }}
+                onClick={() => go('home')}
+              >
+                ← Voltar ao início
+              </button>
+            </div>
+
+            <p className="mut" style={{ marginTop: 8 }}>
+              Use sua localização atual pelo GPS ou digite o nome de uma cidade para buscar
+              restaurantes próximos.
+            </p>
+
+            {jantarGeoDenied && !jantarCoords && (
+              <div
+                style={{
+                  marginTop: 10,
+                  padding: '10px 12px',
+                  borderRadius: 8,
+                  background: 'rgba(217, 105, 44, 0.12)',
+                  border: '1px solid var(--acc2)',
+                }}
+              >
+                <b>Localização pelo GPS não autorizada ou indisponível.</b> Digite o nome da cidade
+                abaixo para buscar os restaurantes.
+              </div>
+            )}
+
+            <div className="grid-form" style={{ marginTop: 10 }}>
+              <label className="field-label">
+                Cidade ou bairro {jantarGeoDenied ? '(obrigatório sem GPS)' : '(ou deixe vazio para usar GPS)'}
+                <input
+                  value={jantarCidade}
+                  onChange={(e) => setJantarCidade(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSearchJantar();
+                  }}
+                  placeholder={
+                    activeViagem?.destino
+                      ? `Ex.: ${activeViagem.destino}`
+                      : 'Ex.: São Paulo, Curitiba, Lisboa…'
+                  }
+                />
+              </label>
+
+              <label className="field-label">
+                Raio de busca
+                <select
+                  value={jantarRaio}
+                  onChange={(e) => {
+                    const nextRaio = Number(e.target.value) as 1 | 3 | 5 | 10;
+                    setJantarRaio(nextRaio);
+                    if (jantarCidade.trim()) {
+                      fetchJantarRestaurants({ city: jantarCidade.trim(), radiusKm: nextRaio });
+                    } else if (jantarCoords) {
+                      fetchJantarRestaurants({
+                        lat: jantarCoords.lat,
+                        lng: jantarCoords.lng,
+                        radiusKm: nextRaio,
+                      });
+                    }
+                  }}
+                >
+                  <option value={1}>1 km</option>
+                  <option value={3}>3 km</option>
+                  <option value={5}>5 km</option>
+                  <option value={10}>10 km</option>
+                </select>
+              </label>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+              <button
+                className="btn"
+                style={{ margin: 0 }}
+                disabled={jantarLoading || jantarGeoLoading}
+                onClick={handleSearchJantar}
+              >
+                {jantarLoading ? 'Buscando restaurantes…' : '🔍 Buscar restaurantes'}
+              </button>
+
+              <button
+                className="btn sec"
+                style={{ margin: 0 }}
+                disabled={jantarLoading || jantarGeoLoading}
+                onClick={() => {
+                  setJantarCidade('');
+                  requestUserGeolocationAndSearch(jantarRaio);
+                }}
+              >
+                {jantarGeoLoading ? 'Obtendo GPS…' : '📍 Usar minha localização (GPS)'}
+              </button>
+
+              {activeViagem?.destino && (
+                <button
+                  className="btn sec"
+                  style={{ margin: 0 }}
+                  disabled={jantarLoading}
+                  onClick={() => {
+                    const dest = activeViagem.destino || '';
+                    setJantarCidade(dest);
+                    fetchJantarRestaurants({ city: dest, radiusKm: jantarRaio });
+                  }}
+                >
+                  ✈️ Buscar em {activeViagem.destino}
+                </button>
+              )}
+            </div>
+
+            {/* Modo Viajando com crianças — Filtros da tela de Jantar */}
+            <div
+              style={{
+                marginTop: 12,
+                padding: '10px 12px',
+                borderRadius: 10,
+                background: 'var(--bg)',
+                border: '1px solid var(--line)',
+              }}
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  gap: 8,
+                }}
+              >
+                <b>
+                  👨‍👩‍👧‍👦 Modo Viajando com crianças
+                  {modoCriancasAtivo && (
+                    <span className="tag">Família ({idadesCriancasAtivas} anos)</span>
+                  )}
+                </b>
+                {activeViagem && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span className="mut">Idades:</span>
+                    <input
+                      value={activeViagem.idadesCriancas || ''}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setFCriancas(val);
+                        setWCriancas(val);
+                        setKCri(val);
+                        updateTripMeta({ idadesCriancas: val });
+                      }}
+                      placeholder="Ex.: 4, 9"
+                      style={{ width: 110, margin: 0, padding: '4px 8px' }}
+                      aria-label="Idades das crianças na viagem"
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div
+                style={{
+                  display: 'flex',
+                  gap: 14,
+                  flexWrap: 'wrap',
+                  marginTop: 8,
+                  alignItems: 'center',
+                }}
+              >
+                <label
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    cursor: 'pointer',
+                    fontSize: '0.9rem',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={jantarFiltroCriancas}
+                    onChange={(e) => setJantarFiltroCriancas(e.target.checked)}
+                    style={{ width: 'auto', margin: 0 }}
+                  />
+                  <span>Adequado para crianças</span>
+                </label>
+
+                <label
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    cursor: 'pointer',
+                    fontSize: '0.9rem',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={jantarFiltroCardapioKids}
+                    onChange={(e) => setJantarFiltroCardapioKids(e.target.checked)}
+                    style={{ width: 'auto', margin: 0 }}
+                  />
+                  <span>Tem cardápio infantil ou Espaço kids</span>
+                </label>
+              </div>
+              <p className="mut" style={{ marginTop: 6, marginBottom: 0 }}>
+                Usa o campo <code>goodForChildren</code> e informações de cardápio infantil/espaço
+                kids quando disponíveis. Quando o dado não existir na base, o card indicará isso sem
+                afirmar.
+              </p>
+            </div>
+
+            {jantarLocLabel && (
+              <p className="mut" style={{ marginTop: 10 }}>
+                📍 Região pesquisada: <b>{jantarLocLabel}</b> · Raio: <b>{jantarRaio} km</b>
+              </p>
+            )}
+          </div>
+
+          {jantarErr && (
+            <div className="card" style={{ borderLeft: '4px solid var(--acc2)' }}>
+              <p className="err" style={{ margin: 0 }}>
+                {jantarErr}
+              </p>
+            </div>
+          )}
+
+          {(jantarLoading || jantarGeoLoading) && (
+            <div className="card">
+              <p className="mut" style={{ margin: 0 }}>
+                {jantarGeoLoading
+                  ? 'Solicitando sua localização ao navegador…'
+                  : 'Buscando restaurantes reais na região escolhida…'}
+              </p>
+            </div>
+          )}
+
+          {!jantarLoading && !jantarGeoLoading && jantarHasSearched && !jantarErr && (
+            <>
+              {jantarSource === 'openstreetmap' && (
+                <div className="card" style={{ borderLeft: '4px solid var(--acc)' }}>
+                  <div
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      gap: 10,
+                    }}
+                  >
+                    <div>
+                      <b>Modo Gratuito Ativo (OpenStreetMap)</b>
+                      <p className="mut" style={{ margin: '4px 0 0' }}>
+                        Restaurantes reais encontrados num raio de {jantarRaio} km. Toque em{' '}
+                        <b>Abrir no Google Maps</b> em qualquer restaurante para conferir a nota
+                        atual, avaliações, cardápio e se está aberto agora.
+                      </p>
+                    </div>
+                    <a
+                      className="btn sec"
+                      style={{ margin: 0, textDecoration: 'none' }}
+                      href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+                        `restaurantes ${
+                          jantarFiltroCriancas || jantarFiltroCardapioKids
+                            ? 'para família com crianças espaço kids '
+                            : ''
+                        }abertos agora perto de ${
+                          jantarCidade.trim() ||
+                          (jantarCoords
+                            ? `${jantarCoords.lat},${jantarCoords.lng}`
+                            : activeViagem?.destino || 'mim')
+                        }`
+                      )}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      🗺️ Ver filtro no Google Maps
+                    </a>
+                  </div>
+                </div>
+              )}
+
+              {(() => {
+                const isConfirmedFamily = (r: JantarPlaceItem) =>
+                  r.goodForChildren === true ||
+                  r.menuForChildren === true ||
+                  r.espacoKids === true;
+
+                const matchesActiveFilters = (r: JantarPlaceItem) => {
+                  if (jantarFiltroCriancas && r.goodForChildren !== true) return false;
+                  if (
+                    jantarFiltroCardapioKids &&
+                    r.menuForChildren !== true &&
+                    r.espacoKids !== true
+                  ) {
+                    return false;
+                  }
+                  return true;
+                };
+
+                const anyFilterOn = jantarFiltroCriancas || jantarFiltroCardapioKids;
+                const strictMatches = jantarPlaces.filter(matchesActiveFilters);
+                // If anyFilterOn is active but no places in the region had the boolean populated (all null),
+                // keep places where the field wasn't explicitly false so the user can still see the cards
+                // with the explicit "Dado não disponível" notice.
+                const withoutExplicitFalse = jantarPlaces.filter((r) => {
+                  if (jantarFiltroCriancas && r.goodForChildren === false) return false;
+                  if (
+                    jantarFiltroCardapioKids &&
+                    r.menuForChildren === false &&
+                    r.espacoKids === false
+                  ) {
+                    return false;
+                  }
+                  return true;
+                });
+
+                const listToRender =
+                  !anyFilterOn
+                    ? jantarPlaces
+                    : strictMatches.length > 0
+                    ? strictMatches
+                    : withoutExplicitFalse;
+
+                const noConfirmedDataForFilter =
+                  anyFilterOn && strictMatches.length === 0 && listToRender.length > 0;
+
+                if (jantarPlaces.length === 0) {
+                  return (
+                    <div className="card">
+                      <p className="mut" style={{ margin: 0 }}>
+                        Nenhum restaurante encontrado nesse raio de {jantarRaio} km. Tente aumentar
+                        o raio para 5 km ou 10 km, ou digite outra cidade.
+                      </p>
+                    </div>
+                  );
+                }
+
+                if (listToRender.length === 0) {
+                  return (
+                    <div className="card">
+                      <p className="mut" style={{ margin: 0 }}>
+                        Nenhum restaurante retornado atendeu ao filtro selecionado. Desmarque os
+                        filtros acima para ver todos os {jantarPlaces.length} restaurantes da
+                        região.
+                      </p>
+                    </div>
+                  );
+                }
+
+                return (
+                  <>
+                    {noConfirmedDataForFilter && (
+                      <div className="card" style={{ borderLeft: '4px solid var(--acc2)' }}>
+                        <p className="mut" style={{ margin: 0 }}>
+                          <b>Aviso sobre o filtro:</b> A base de dados não informou confirmação de{' '}
+                          {jantarFiltroCriancas ? '"Adequado para crianças"' : ''}
+                          {jantarFiltroCriancas && jantarFiltroCardapioKids ? ' nem de ' : ''}
+                          {jantarFiltroCardapioKids ? '"Cardápio infantil / Espaço kids"' : ''}{' '}
+                          para os restaurantes desta busca. Veja abaixo os restaurantes encontrados
+                          (indicados como <b>"Informação não disponível"</b>, sem afirmar) ou
+                          confira diretamente no Google Maps.
+                        </p>
+                      </div>
+                    )}
+
+                    {listToRender.map((r) => {
+                      const seloFamilia = isConfirmedFamily(r);
+                      const statusCriancas =
+                        r.goodForChildren === true
+                          ? 'Sim (confirmado)'
+                          : r.goodForChildren === false
+                          ? 'Não indicado'
+                          : 'Informação não disponível (confira no local)';
+
+                      const statusCardapioKids =
+                        r.menuForChildren === true && r.espacoKids === true
+                          ? 'Cardápio infantil e Espaço kids confirmados'
+                          : r.menuForChildren === true
+                          ? 'Tem cardápio infantil (Espaço kids não informado)'
+                          : r.espacoKids === true
+                          ? 'Tem Espaço kids (Cardápio infantil não informado)'
+                          : r.menuForChildren === false && r.espacoKids === false
+                          ? 'Não informado / Não consta'
+                          : 'Informação não disponível (sem confirmação)';
+
+                      return (
+                        <div className="card" key={r.id}>
+                          <div
+                            style={{
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'flex-start',
+                              gap: 8,
+                              flexWrap: 'wrap',
+                            }}
+                          >
+                            <div>
+                              <h3 style={{ margin: 0 }}>
+                                {r.nome}
+                                {r.culinaria && <span className="tag">{r.culinaria}</span>}
+                                {seloFamilia && (
+                                  <span className="tag">👨‍👩‍👧‍👦 Família</span>
+                                )}
+                              </h3>
+                              <p className="mut" style={{ marginTop: 4 }}>
+                                📍 {r.endereco}
+                              </p>
+                            </div>
+                            <span className="tag" style={{ fontWeight: 700 }}>
+                              {r.distanciaKm.toFixed(1)} km
+                            </span>
+                          </div>
+
+                          <div className="cost" style={{ marginTop: 10 }}>
+                            <div>
+                              Nota
+                              <b>{r.nota !== null ? `⭐ ${r.nota.toFixed(1)}` : 'Ver no Maps'}</b>
+                            </div>
+                            <div>
+                              Avaliações
+                              <b>
+                                {r.avaliacoes !== null
+                                  ? `${r.avaliacoes.toLocaleString('pt-BR')} avaliações`
+                                  : 'Ver no Maps'}
+                              </b>
+                            </div>
+                            <div>
+                              Faixa de preço
+                              <b>{r.faixaPreco}</b>
+                            </div>
+                            <div>
+                              Distância
+                              <b>{r.distanciaKm.toFixed(1)} km</b>
+                            </div>
+                            {r.horarioInfo && (
+                              <div>
+                                Horário
+                                <b>{r.horarioInfo}</b>
+                              </div>
+                            )}
+                            <div>
+                              Adequado para crianças
+                              <b>{statusCriancas}</b>
+                            </div>
+                            <div>
+                              Cardápio infantil / Espaço kids
+                              <b>{statusCardapioKids}</b>
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+                            <a
+                              className="btn"
+                              style={{
+                                margin: 0,
+                                textDecoration: 'none',
+                                display: 'inline-block',
+                              }}
+                              href={r.googleMapsUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              🗺️ Abrir no Google Maps
+                            </a>
+
+                            {activeViagem && (
+                              <button
+                                className="btn sec"
+                                style={{ margin: 0 }}
+                                onClick={async () => {
+                                  await addItem({
+                                    tipo: 'restaurante',
+                                    titulo: r.nome,
+                                    valor: 0,
+                                    nota: `${r.endereco} (${r.distanciaKm.toFixed(1)} km)`,
+                                  });
+                                  toast(`"${r.nome}" salvo no roteiro!`);
+                                }}
+                              >
+                                + Salvar no nosso roteiro
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </>
+                );
+              })()}
+            </>
+          )}
         </section>
       )}
 
@@ -3499,7 +4015,13 @@ Pergunta do viajante: ${pergunta}`;
                 Idades das crianças
                 <input
                   value={fCriancas}
-                  onChange={(e) => setFCriancas(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setFCriancas(val);
+                    setWCriancas(val);
+                    setKCri(val);
+                    updateTripMeta({ idadesCriancas: val });
+                  }}
                   placeholder="Ex.: 4, 9 (vazio = sem)"
                 />
               </label>
@@ -3588,11 +4110,15 @@ Pergunta do viajante: ${pergunta}`;
             fSugestoes.map((s, i) => {
               const c = s.custos || ({} as FeriasSugestao['custos']);
               const ps = s.passagem || { onde_comprar: '', milhas_ou_dinheiro: '' };
+              const temCriancasFerias = Boolean(
+                (fCriancas || activeViagem?.idadesCriancas || '').trim() || s.dica_por_idade
+              );
               return (
                 <div className="card" key={i}>
                   <h3>
                     {s.destino}
                     {s.tipo && <span className="tag">{s.tipo}</span>}
+                    {temCriancasFerias && <span className="tag">👨‍👩‍👧‍👦 Família</span>}
                   </h3>
                   <div className="mut">{s.pais}</div>
                   <p>{s.porque}</p>
@@ -3631,6 +4157,17 @@ Pergunta do viajante: ${pergunta}`;
 
                   {renderLista('Como economizar', s.dicas_economia)}
                   {renderLista('Hospedagem', s.hospedagem)}
+
+                  {s.dica_por_idade && (
+                    Array.isArray(s.dica_por_idade) ? (
+                      renderLista('👨‍👩‍👧‍👦 Dica por idade das crianças', s.dica_por_idade)
+                    ) : (
+                      <>
+                        <h4>👨‍👩‍👧‍👦 Dica por idade das crianças</h4>
+                        <p>{s.dica_por_idade}</p>
+                      </>
+                    )
+                  )}
 
                   <h4>Passagem</h4>
                   <p>
@@ -3706,7 +4243,14 @@ Pergunta do viajante: ${pergunta}`;
                 Idades das crianças
                 <input
                   value={wCriancas}
-                  onChange={(e) => setWCriancas(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setWCriancas(val);
+                    setFCriancas(val);
+                    setKCri(val);
+                    if (val.trim()) setWPerfil('família com criança');
+                    updateTripMeta({ idadesCriancas: val });
+                  }}
                   placeholder="Ex.: 5"
                 />
               </label>
@@ -3780,36 +4324,56 @@ Pergunta do viajante: ${pergunta}`;
           {wErr && <p className="err">{wErr}</p>}
 
           {!wLoading &&
-            wOpcoes.map((s, i) => (
-              <div className="card" key={i}>
-                <h3>{s.destino}</h3>
-                <div className="mut">
-                  {s.distancia} · ~{fmtMoney(s.custo_estimado_brl)}
-                </div>
-                <p>{s.porque}</p>
-                {renderLista('Roteiro', s.roteiro)}
-                {renderLista('Restaurantes', s.restaurantes)}
-                {s.hospedagem && (
-                  <>
-                    <h4>Onde ficar</h4>
-                    <p>{s.hospedagem}</p>
-                  </>
-                )}
-                {s.clima_tipico && (
-                  <>
-                    <h4>Clima típico</h4>
-                    <p>{s.clima_tipico}</p>
-                  </>
-                )}
-                {renderLista('Como economizar', s.dicas_economia)}
-                {s.dica_crianca && (
-                  <>
-                    <h4>Com criança</h4>
-                    <p>{s.dica_crianca}</p>
-                  </>
-                )}
+            wOpcoes.map((s, i) => {
+              const temCriancasFds = Boolean(
+                (wCriancas || activeViagem?.idadesCriancas || '').trim() ||
+                  wPerfil === 'família com criança' ||
+                  s.dica_por_idade ||
+                  s.dica_crianca
+              );
+              return (
+                <div className="card" key={i}>
+                  <h3>
+                    {s.destino}
+                    {temCriancasFds && <span className="tag">👨‍👩‍👧‍👦 Família</span>}
+                  </h3>
+                  <div className="mut">
+                    {s.distancia} · ~{fmtMoney(s.custo_estimado_brl)}
+                  </div>
+                  <p>{s.porque}</p>
+                  {renderLista('Roteiro', s.roteiro)}
+                  {renderLista('Restaurantes', s.restaurantes)}
+                  {s.hospedagem && (
+                    <>
+                      <h4>Onde ficar</h4>
+                      <p>{s.hospedagem}</p>
+                    </>
+                  )}
+                  {s.clima_tipico && (
+                    <>
+                      <h4>Clima típico</h4>
+                      <p>{s.clima_tipico}</p>
+                    </>
+                  )}
+                  {renderLista('Como economizar', s.dicas_economia)}
+                  {s.dica_por_idade && (
+                    Array.isArray(s.dica_por_idade) ? (
+                      renderLista('👨‍👩‍👧‍👦 Dica por idade das crianças', s.dica_por_idade)
+                    ) : (
+                      <>
+                        <h4>👨‍👩‍👧‍👦 Dica por idade das crianças</h4>
+                        <p>{s.dica_por_idade}</p>
+                      </>
+                    )
+                  )}
+                  {s.dica_crianca && (
+                    <>
+                      <h4>Com criança</h4>
+                      <p>{s.dica_crianca}</p>
+                    </>
+                  )}
 
-                {/* Achar mais barato (#1, #2, #3, #4) */}
+                  {/* Achar mais barato (#1, #2, #3, #4) */}
                 {renderAcharMaisBarato({
                   cardKey: `fds_${i}_${s.destino}`,
                   destino: s.destino,
@@ -3822,11 +4386,12 @@ Pergunta do viajante: ${pergunta}`;
                   alvoHoteis: Math.round((Number(s.custo_estimado_brl) || 0) * 0.5),
                 })}
 
-                <button className="btn sec" onClick={() => saveFdsDest(s)}>
-                  Salvar no roteiro compartilhado
-                </button>
-              </div>
-            ))}
+                  <button className="btn sec" onClick={() => saveFdsDest(s)}>
+                    Salvar no roteiro compartilhado
+                  </button>
+                </div>
+              );
+            })}
         </section>
       )}
 
@@ -4379,8 +4944,8 @@ Pergunta do viajante: ${pergunta}`;
                   <b>{fmtMoney(items.reduce((s, i) => s + (Number(i.valor) || 0), 0))}</b>
                 </p>
                 {items.map((i) => {
-                  const meId = user?.email || 'você';
-                  const voteId = user?.email || 'local';
+                  const meId = user.email || '';
+                  const voteId = user.email || '';
                   const v = arr<string>(i.votos);
                   const c = arr<ComentarioItem>(i.comentarios);
                   const isOpen = Boolean(openComments[i.id]);
@@ -4393,7 +4958,7 @@ Pergunta do viajante: ${pergunta}`;
                         {i.data ? <span className="mut"> · {fmtD(i.data)}</span> : null}
                         {i.nota ? <div className="mut">{i.nota}</div> : null}
                         <div className="mut">
-                          {i.autor && (i.autor === meId || i.autor === 'local')
+                          {i.autor && i.autor === meId
                             ? 'adicionado por você'
                             : i.autor
                             ? `adicionado por ${i.autor}`

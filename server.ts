@@ -4,6 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import geminiHandler from './api/gemini.ts';
+import placesHandler from './api/places.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,6 +22,10 @@ async function startServer() {
 
   app.post('/api/gemini', async (req, res) => {
     await geminiHandler(req, res);
+  });
+
+  app.post('/api/places', async (req, res) => {
+    await placesHandler(req, res);
   });
 
   if (process.env.NODE_ENV !== 'production') {
